@@ -44,6 +44,8 @@ module tb_dsc_e2e;
     int           mux_output_count = 0;
     int           mux_mismatch_count = 0;
     int           mux_valid_count = 0;
+    int           pre_ram_output_count = 0;
+    int           pre_ram_mismatch_count = 0;
     int           excess_output_count = 0;
     int           accepted_input_count = 0;
     int           partition_valid_count = 0;
@@ -55,6 +57,7 @@ module tb_dsc_e2e;
     int           write_ready_count = 0;
     int           dsc_write_ready_count = 0;
     int           dsc_pps_update_count = 0;
+    int           linemem_collision_count = 0;
 
     always #5 apb_clk = ~apb_clk;
     always #4 axi_clk = ~axi_clk;
@@ -164,8 +167,26 @@ module tb_dsc_e2e;
             flatness_valid_count++;
         if (dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_valid_pd)
             predict_valid_count++;
-        if (dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.i_muxword_valid_sb)
+        if (dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_linemem_inst.i_read_enable &&
+            dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_linemem_inst.i_write_enable &&
+            dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_linemem_inst.i_read_addr ==
+            dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_linemem_inst.i_write_addr)
+            linemem_collision_count++;
+        if (dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.i_muxword_valid_sb) begin
             muxword_count++;
+            for (int byte_index = 0; byte_index < 6; byte_index++) begin
+                if (pre_ram_output_count < kPAYLOAD_BYTES &&
+                    dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.i_muxword_sb[byte_index*8 +: 8] !==
+                    expected_payload[pre_ram_output_count]) begin
+                    if (pre_ram_mismatch_count < 8)
+                        $display("PRE_RAM_MISMATCH byte=%0d expected=%02x actual=%02x",
+                                 pre_ram_output_count, expected_payload[pre_ram_output_count],
+                                 dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.i_muxword_sb[byte_index*8 +: 8]);
+                    pre_ram_mismatch_count++;
+                end
+                pre_ram_output_count++;
+            end
+        end
     end
 
     initial begin : TestSequence
@@ -248,8 +269,12 @@ module tb_dsc_e2e;
             $display("PIPELINE input=%0d partition=%0d csc=%0d groups=%0d flat=%0d predict=%0d muxwords=%0d",
                      accepted_input_count, partition_valid_count, csc_valid_count,
                      slice_group_count, flatness_valid_count, predict_valid_count, muxword_count);
+            $display("COMPARE pre_ram_bytes=%0d pre_ram_mismatches=%0d mux_bytes=%0d mux_mismatches=%0d",
+                     pre_ram_output_count, pre_ram_mismatch_count,
+                     mux_output_count, mux_mismatch_count);
             $display("CDC write_ready_cycles=%0d dsc_ready_cycles=%0d pps_update_cycles=%0d",
                      write_ready_count, dsc_write_ready_count, dsc_pps_update_count);
+            $display("SUPPORT linemem_same_address_collisions=%0d", linemem_collision_count);
             $display("STATE axi_enable=%0b dsc_enable=%0b overflow=%0b slb_waddr=%0d slb_raddr=%0d read_state=%0d pipe_state=%0d width=%0d height=%0d fmt_waddr=%0d fmt_raddr=%0d",
                      dut.axi_encoder_enable, dut.dsc_encoder_enable,
                      dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_slice_buffer_overflow,

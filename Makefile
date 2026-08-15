@@ -1,4 +1,4 @@
-.PHONY: golden images model model-clean model-run rtl-clean rtl-e2e rtl-lint rtl-smoke
+.PHONY: golden images model model-clean model-run rtl-clean rtl-e2e rtl-lint rtl-slang rtl-smoke
 
 GOLDEN_SEED ?= 0x445343
 
@@ -20,6 +20,9 @@ model-run: images model
 rtl-lint:
 	verilator --lint-only --timing -Wall -Wno-fatal \
 		--top-module dsc_encoder -f tests/verilator/rtl.f
+
+rtl-slang:
+	slang --std 1800-2017 --top dsc_encoder -f tests/verilator/rtl.f
 
 rtl-smoke:
 	verilator --binary --timing --assert -Wall -Wno-fatal \

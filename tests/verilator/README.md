@@ -28,6 +28,12 @@
 
 原始 RTL 包不含 `gprim_sync_stage`、`gprim_sync2_stage` 和 `gram_bist_1r1w`。`support/` 提供仅用于仿真的模型：同步器保留一拍/两拍延迟，RAM 使用同步读写，BIST 不建模。这些模型不能替代工艺库 CDC、冲突语义或 BIST 签核。
 
+`make rtl-slang` 已能完整 elaborate 顶层，说明 support 端口宽度和连接匹配。RAM
+读延迟敏感性测试中，异步读和两拍读都会在 PPS 加载阶段立即失败，只有一拍同步读
+符合现有 RTL 状态机。默认用例中 line memory 没有发生同地址读写冲突；并且 payload
+在写入 format buffer RAM 前已经于 byte 110 出错，因此该 RAM 和后续输出路径不是
+首差异来源。缺少原厂 primitive 定义，尚不能把所有工艺相关行为视为签核完成。
+
 ## 尚未验证
 
 当前端到端用例仅覆盖单 slice processor、4 pixel/cycle 和 48-bit 输出。后续应在

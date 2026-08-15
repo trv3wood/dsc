@@ -22,10 +22,25 @@ module gram_bist_1r1w #(
             memory[addr_w] <= data_w;
     end
 
+`ifdef DSC_SUPPORT_RAM_ASYNC_READ
+    // 诊断模式：验证 RTL 是否可能依赖异步读 RAM。
+    always_comb data_r = memory[addr_r];
+`elsif DSC_SUPPORT_RAM_TWO_CYCLE_READ
+    // 诊断模式：验证 RTL 是否可能依赖两拍读延迟。
+    logic [pDATA_BITS-1:0] read_pipeline;
+    always_ff @(posedge clk_r) begin
+        if (en_r) begin
+            read_pipeline <= memory[addr_r];
+            data_r <= read_pipeline;
+        end
+    end
+`else
+    // 默认语义：使能后在读时钟边沿更新输出，即一拍同步读。
     always_ff @(posedge clk_r) begin
         if (en_r)
             data_r <= memory[addr_r];
     end
+`endif
 
     always_comb begin
         bist_out = 12'h000;
