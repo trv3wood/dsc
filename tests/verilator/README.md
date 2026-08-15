@@ -11,18 +11,27 @@
 - 编码器关闭时的 192-bit bypass 数据一致性；
 - AXI 输出 backpressure 期间 `valid` 和数据保持。
 
+`make rtl-e2e` 使用固定 seed `0x445343` 生成 96×108、RGB 8bpc、12bpp 的
+可复现伪随机输入，用 C model
+产生 PPS 和 golden payload，再通过 APB 配置 RTL、送入整帧像素并逐字节比较输出。
+生成物位于忽略的 `tests/verilator/generated/`，不应提交。
+
+用 `python3 tests/verilator/generate_golden.py --seed 0x1234` 可覆盖默认 seed；
+通过 Makefile 运行完整对拍时使用 `make rtl-e2e GOLDEN_SEED=0x1234`。
+
+当前该测试预期失败，用于复现待修 RTL：原生 muxword 流在 byte 110 首次不同，
+期望 `84`、实际 `85`；RTL 共输出 4380 bytes，而 C model 的固定 chunk payload
+为 15552 bytes。前 110 bytes 在 bypass 前后均一致，说明首差异位于编码路径，
+并且仍需独立检查 chunk 填充或结束控制。
+
 ## 仿真假设
 
 原始 RTL 包不含 `gprim_sync_stage`、`gprim_sync2_stage` 和 `gram_bist_1r1w`。`support/` 提供仅用于仿真的模型：同步器保留一拍/两拍延迟，RAM 使用同步读写，BIST 不建模。这些模型不能替代工艺库 CDC、冲突语义或 BIST 签核。
 
 ## 尚未验证
 
-当前 smoke test 不配置 PPS，也不启动 DSC 编码核心，因此尚未覆盖预测、量化、码率控制、slice 调度和压缩 bitstream。完成算法级验证需要：
-
-1. 从 C reference model 导出 128-byte PPS 和期望 DSC payload；
-2. 根据用户指南确认 192-bit 输入像素排列、`tframe`/`tline` 语义；
-3. 通过 APB 写入 PPS 和运行参数；
-4. 收集每次 AXI 握手的有效输出字节，与 C model 逐字节比较；
-5. 加入输出随机 backpressure、输入空泡及多种 RGB/YUV 配置。
+当前端到端用例仅覆盖单 slice processor、4 pixel/cycle 和 48-bit 输出。后续应在
+修复首差异后加入随机 backpressure、输入空泡、多 slice 以及 RGB/YUV 配置，并确认
+归档缺失 SRAM 的真实读延迟和冲突语义。
 
 不要将 lint 或 smoke 通过表述为完整 DSC 功能签核。

@@ -16,6 +16,7 @@ model/config/*.yuv
 *.wlf
 work/
 obj_dir/
+tests/verilator/generated/
 
 # Python 缓存
 __pycache__/
