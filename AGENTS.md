@@ -9,6 +9,9 @@
 - `make model` builds the Linux reference executable as `model/src/dsc` with GCC.
 - `make model-clean` removes reference-model objects and the executable.
 - `make model-run` runs the model from `model/config/` with `test.cfg`; ensure the input paths named by `test_list.txt` exist.
+- `make rtl-lint` elaborates and lints the active `dsc_encoder` hierarchy with Verilator.
+- `make rtl-smoke` runs reset, APB, bypass, and AXI backpressure checks; it is not a DSC bitstream comparison.
+- `make rtl-clean` removes Verilator build products.
 - `git status --short` checks that model outputs such as `log.txt`, `*.dsc`, and `*.out.dpx` are not accidentally staged.
 
 No repository-wide RTL build or simulator harness is currently provided. When adding one, document the exact compiler, top module, file order, and invocation here.

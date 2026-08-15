@@ -15,6 +15,7 @@ model/config/*.yuv
 *.fst
 *.wlf
 work/
+obj_dir/
 
 # Python 缓存
 __pycache__/
