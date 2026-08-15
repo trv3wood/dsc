@@ -1,0 +1,16 @@
+# C 参考模型构建产物
+model/src/*.o
+model/src/dsc
+
+# 参考模型运行产物
+model/config/log.txt
+model/config/*.dsc
+model/config/*.dpx
+model/config/*.ppm
+model/config/*.yuv
+
+# RTL 仿真产物
+*.vcd
+*.fst
+*.wlf
+work/

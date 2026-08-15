@@ -1,0 +1,3 @@
+test_picture1.dpx
+test_picture2.dpx
+some_other_test.dpx
