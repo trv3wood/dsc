@@ -103,6 +103,7 @@ module dsce_slice
     logic                       i_last_fd;
     tDSC_PIXEL                  i_group_fd [2:0];
     tDSC_FLAT_FLAGS             i_vlc_flat_flags_fd;
+    tDSC_FLAT_FLAGS             i_vlc_flat_flags_pipe [3:1];
     logic                       i_ich_next_is_very_flat;
 
     logic                       i_valid_pd;
@@ -138,6 +139,14 @@ module dsce_slice
     always_comb begin : SignalMap
         cfg_slice_status.slice_overflow = i_slice_buffer_overflow;
     end : SignalMap
+
+    // flatness flags 与三拍 prediction pipeline 对齐。
+    always_ff @(posedge dsc_clk or negedge dsc_reset_n) begin : FlatnessPipeline
+        if (!dsc_reset_n)
+            i_vlc_flat_flags_pipe <= '{default: kDSC_FLAT_FLAGS_INIT};
+        else
+            i_vlc_flat_flags_pipe <= {i_vlc_flat_flags_pipe[2:1], i_vlc_flat_flags_fd};
+    end
 
 
     // ------------------------------------------------------------------------------------------------------------
@@ -422,7 +431,7 @@ module dsce_slice
         .dsc_use_mpp                (i_mpp_dec),
         .dsc_ich_selected           (i_ich_selected_dec),
         .dsc_vlc_size               (i_vlc_size_dec),
-        .dsc_flatness_flag          (1'b0),
+        .dsc_flatness_flag          (i_vlc_flat_flags_pipe[3].group_flatness_type != 2'd0),
         // primary quant level
         .dsc_qp_valid_out           (i_valid_rc),
         .dsc_primary_qp             (i_rc_primary_qp),
@@ -478,7 +487,7 @@ module dsce_slice
         .dsc_primary_qp_in          (i_primary_qp_res),
         .dsc_qlevel_y_in            (i_qlevel_y_res),
         .dsc_qlevel_c_in            (i_qlevel_c_res),
-        .dsc_flatness_in            (2'b00),
+        .dsc_flatness_in            (i_vlc_flat_flags_pipe[3]),
         // residual input
         .dsc_ich_selected_in        (i_ich_selected_dec),
         .dsc_ich_index_in           (i_index_ich),
@@ -501,4 +510,3 @@ module dsce_slice
     );
 
 endmodule : dsce_slice
-

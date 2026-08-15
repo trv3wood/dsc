@@ -102,6 +102,48 @@ module dsce_flat_flags
 
     // ----- legacy and debug signals ----- //
     logic                   i_perform_flatness_check;
+    logic   [1:0]           i_output_supergroup_index;
+    logic                   i_current_first_flat_valid;
+    logic   [1:0]           i_current_first_flat;
+    logic                   i_current_flatness_type;
+    logic                   i_next_first_flat_valid;
+    logic   [1:0]           i_next_first_flat;
+    logic                   i_next_flatness_type;
+    logic   [1:0]           i_candidate_type [3:0];
+    tDSC_QLEVEL             i_flat_qp;
+    tDSC_QLEVEL             i_flat_qlevel_y;
+    tDSC_QLEVEL             i_flat_qlevel_c;
+    logic   [15:0]          i_flat_threshold_y;
+    logic   [15:0]          i_flat_threshold_c;
+
+    function automatic logic [1:0] dsce_flatness_type(
+        input tDSC_PIXEL check_1,
+        input tDSC_PIXEL check_2
+    );
+        logic very_flat_1;
+        logic somewhat_flat_1;
+        logic very_flat_2;
+        logic somewhat_flat_2;
+
+        very_flat_1 = check_1.y <= i_very_flat_thresh &&
+                      check_1.co <= i_very_flat_thresh &&
+                      check_1.cg <= i_very_flat_thresh;
+        somewhat_flat_1 = check_1.y <= i_flat_threshold_y &&
+                          check_1.co <= i_flat_threshold_c &&
+                          check_1.cg <= i_flat_threshold_c;
+        very_flat_2 = check_2.y <= i_very_flat_thresh &&
+                      check_2.co <= i_very_flat_thresh &&
+                      check_2.cg <= i_very_flat_thresh;
+        somewhat_flat_2 = check_2.y <= i_flat_threshold_y &&
+                          check_2.co <= i_flat_threshold_c &&
+                          check_2.cg <= i_flat_threshold_c;
+
+        if (very_flat_1 || (!somewhat_flat_1 && very_flat_2))
+            return 2'd2;
+        if (somewhat_flat_1 || somewhat_flat_2)
+            return 2'd1;
+        return 2'd0;
+    endfunction
 
 
     // ------------------------------------------------------------------------------------------------------------
@@ -114,6 +156,20 @@ module dsce_flat_flags
 
         // only calculate flatness when allowed by the primary_qp value
         i_perform_flatness_check = (dsc_primary_qp >= i_flatness_min_qp && dsc_primary_qp <= i_flatness_max_qp) ? 1'b1 : 1'b0;
+
+        i_flat_qp = dsce_adjust_qp_somewhat_flat(dsc_primary_qp);
+        i_flat_qlevel_y = dsce_qp_to_qlevel(kBPC_Y_FLAG, i_bits_per_component, i_flat_qp);
+        i_flat_qlevel_c = dsce_qp_to_qlevel(kBPC_C_FLAG, i_bits_per_component, i_flat_qp);
+        if (i_dsc_version_2_active && !cfg_pps.convert_rgb && i_flat_qlevel_c != 0)
+            i_flat_qlevel_c = i_flat_qlevel_c - 1'b1;
+        i_flat_threshold_y = dsce_max_2(i_very_flat_thresh, dsce_quant_divisor(i_flat_qlevel_y));
+        i_flat_threshold_c = dsce_max_2(i_very_flat_thresh, dsce_quant_divisor(i_flat_qlevel_c));
+
+        // group 3 输出时，队列中的 1/2/3 和当前输入正好覆盖下一个 supergroup。
+        i_candidate_type[0] = dsce_flatness_type(i_sg_1_check_diff[1], i_sg_1_check_diff[2]);
+        i_candidate_type[1] = dsce_flatness_type(i_sg_2_check_diff[1], i_sg_2_check_diff[2]);
+        i_candidate_type[2] = dsce_flatness_type(i_sg_3_check_diff[1], i_sg_3_check_diff[2]);
+        i_candidate_type[3] = dsce_flatness_type(dsc_check_diff_in[1], dsc_check_diff_in[2]);
 
         // quantization divisors
         i_quant_divisor_y = dsce_quant_divisor(i_ich_qlevel_y);
@@ -154,6 +210,10 @@ module dsce_flat_flags
             i_stage_valid <= 3'b000;
             i_flush_count <= 3'd0;
             i_flush_group <= 1'b0;
+            i_output_supergroup_index <= 2'd0;
+            i_current_first_flat_valid <= 1'b0;
+            i_current_first_flat <= 2'd0;
+            i_current_flatness_type <= 1'b0;
 
         end else begin
 
@@ -185,10 +245,46 @@ module dsce_flat_flags
             if (i_stage_valid[3] == 1'b1) begin
                 // group output
                 if (i_buffer_valid[0] == 1'b1) begin
+                    logic scan_prev_flat;
                     dsc_group_valid_out <= 1'b1;
                     dsc_group_out <= i_super_group_0;
                     dsc_group_last_out <= (i_flush_count == 3'd1) ? 1'b1 : 1'b0;
                     dsc_vlc_flat_flags_out <= kDSC_FLAT_FLAGS_INIT;
+
+                    dsc_vlc_flat_flags_out.group_flatness_type <=
+                        (i_current_first_flat_valid && i_output_supergroup_index == i_current_first_flat) ?
+                        (i_current_flatness_type ? 2'd2 : 2'd1) : 2'd0;
+                    if (i_dsc_version_2_active && i_flush_count == 3'd1)
+                        dsc_vlc_flat_flags_out.group_flatness_type <= 2'd2;
+
+                    if (i_output_supergroup_index == 2'd0 && i_current_first_flat_valid) begin
+                        dsc_vlc_flat_flags_out.send_flatness <= 1'b1;
+                        dsc_vlc_flat_flags_out.first_flat <= i_current_first_flat;
+                        dsc_vlc_flat_flags_out.flatness_type <= i_current_flatness_type;
+                    end
+
+                    if (i_output_supergroup_index == 2'd3) begin
+                        i_next_first_flat_valid = 1'b0;
+                        i_next_first_flat = 2'd0;
+                        i_next_flatness_type = 1'b0;
+                        scan_prev_flat = i_current_first_flat_valid;
+                        if (i_perform_flatness_check) begin
+                            for (int fx = 0; fx < 4; fx++) begin
+                                if (!i_next_first_flat_valid && !scan_prev_flat && i_candidate_type[fx] != 0) begin
+                                    i_next_first_flat_valid = 1'b1;
+                                    i_next_first_flat = fx[1:0];
+                                    i_next_flatness_type = i_candidate_type[fx] == 2'd2;
+                                end
+                                scan_prev_flat = i_candidate_type[fx] != 0;
+                            end
+                        end
+                        dsc_vlc_flat_flags_out.next_flatness_flag <= i_next_first_flat_valid;
+                        i_current_first_flat_valid <= i_next_first_flat_valid;
+                        i_current_first_flat <= i_next_first_flat;
+                        i_current_flatness_type <= i_next_flatness_type;
+                    end
+
+                    i_output_supergroup_index <= i_output_supergroup_index + 2'd1;
                 end // if
 
                 // flush logic
@@ -332,4 +428,3 @@ module dsce_flat_flags
 
 
 endmodule : dsce_flat_flags
-

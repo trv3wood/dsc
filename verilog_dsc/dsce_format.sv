@@ -48,7 +48,7 @@ module dsce_format
     input  tDSC_QLEVEL               dsc_primary_qp_in,             // primary QP value
     input  tDSC_QLEVEL               dsc_qlevel_y_in,               // luma quant level for the current group
     input  tDSC_QLEVEL               dsc_qlevel_c_in,               // chroma quant level for the current group
-    input  logic [1:0]               dsc_flatness_in,               // flatness code input
+    input  tDSC_FLAT_FLAGS           dsc_flatness_in,               // flatness code input
 
     // residual path input
     input  logic                     dsc_ich_selected_in,           // ICH mode selected
@@ -228,4 +228,3 @@ module dsce_format
     );
 
 endmodule : dsce_format
-

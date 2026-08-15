@@ -59,6 +59,7 @@ module tb_dsc_e2e;
     int           slice_group_count = 0;
     int           flatness_valid_count = 0;
     int           flatness_flag_nonzero_count = 0;
+    int           flatness_flag_print_count = 0;
     int           predict_valid_count = 0;
     int           muxword_count = 0;
     int           write_ready_count = 0;
@@ -72,6 +73,7 @@ module tb_dsc_e2e;
     int           decision_line = 0;
     int           decision_group = 0;
     int           rate_group = 0;
+    int           flat_adjust_group = 0;
 
     always #5 apb_clk = ~apb_clk;
     always #4 axi_clk = ~axi_clk;
@@ -179,13 +181,44 @@ module tb_dsc_e2e;
             slice_group_count++;
         if (dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_valid_fd)
             flatness_valid_count++;
+        if (dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_valid_fd) begin
+            if (flat_adjust_group >= 28 && flat_adjust_group < 40)
+                $display("FLAT_ADJUST group=%0d last=%0b rc_qp=%0d out_qp=%0d saved_last=%0d orig_flat=%0b valid_pipe=%03b last_pipe=%03b",
+                         flat_adjust_group,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_last_fd,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_rc_primary_qp,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_primary_qp,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_adjust_inst.i_last_used_qp_in_slice_line,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_adjust_inst.i_orig_is_flat,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_adjust_inst.i_valid_pipe,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_adjust_inst.i_last_pipe);
+            flat_adjust_group++;
+        end
+        if (dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_flatness_inst.dsce_flat_flags_inst.i_stage_valid[3] &&
+            dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_flatness_inst.dsce_flat_flags_inst.i_buffer_valid[0] &&
+            dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_flatness_inst.dsce_flat_flags_inst.i_output_supergroup_index == 2'd3 &&
+            flat_adjust_group < 80)
+            $display("FLAT_CAND out_group=%0d types=%0d/%0d/%0d/%0d qp=%0d",
+                     flat_adjust_group,
+                     dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_flatness_inst.dsce_flat_flags_inst.i_candidate_type[0],
+                     dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_flatness_inst.dsce_flat_flags_inst.i_candidate_type[1],
+                     dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_flatness_inst.dsce_flat_flags_inst.i_candidate_type[2],
+                     dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_flatness_inst.dsce_flat_flags_inst.i_candidate_type[3],
+                     dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_primary_qp);
         if (dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_valid_fd &&
-            dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_vlc_flat_flags_fd != '0)
+            dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_vlc_flat_flags_fd != '0) begin
             flatness_flag_nonzero_count++;
+            if (flatness_flag_print_count < 20) begin
+                $display("FLAT_FLAG group=%0d value=%02x", flat_adjust_group,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_vlc_flat_flags_fd);
+                flatness_flag_print_count++;
+            end
+        end
         if (dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_valid_pd)
             predict_valid_count++;
         if (dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_valid_pd) begin
-            if (decision_line == 0 && (decision_group < 12 || decision_group >= 28))
+            if ((decision_line == 0 && (decision_group < 12 || decision_group >= 28)) ||
+                (decision_line == 1 && decision_group < 8))
                 $display("DECISION line=%0d group=%0d qp=%0d ich=%0b force_mpp=%0b sizes=%0d/%0d/%0d",
                          decision_line, decision_group,
                          dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_primary_qp_res,
@@ -194,6 +227,19 @@ module tb_dsc_e2e;
                          dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_size_dec[0],
                          dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_size_dec[1],
                          dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_size_dec[2]);
+            if (decision_line == 1 && decision_group == 0)
+                $display("RESIDUAL line=1 group=0 y=%0d/%0d/%0d co=%0d/%0d/%0d cg=%0d/%0d/%0d qlevel=%0d/%0d",
+                         $signed(dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[0].res_y),
+                         $signed(dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[1].res_y),
+                         $signed(dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[2].res_y),
+                         $signed(dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[0].res_co),
+                         $signed(dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[1].res_co),
+                         $signed(dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[2].res_co),
+                         $signed(dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[0].res_cg),
+                         $signed(dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[1].res_cg),
+                         $signed(dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[2].res_cg),
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_qlevel_y_res,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_qlevel_c_res);
             if (dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_last_pd) begin
                 decision_line++;
                 decision_group = 0;

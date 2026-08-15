@@ -98,8 +98,11 @@ static void TraceGroupInput(dsc_state_t *dsc_state)
 	if (!trace_file)
 		return;
 
-	fprintf(trace_file, "group=%d qp=%d ich=%d", dsc_state->groupCountLine,
-		dsc_state->primaryQp, dsc_state->ichSelected);
+	fprintf(trace_file,
+		"line=%d group=%d qp=%d ich=%d first_flat=%d flat_type=%d orig_flat=%d next_first_flat=%d",
+		dsc_state->vPos, dsc_state->groupCountLine, dsc_state->primaryQp,
+		dsc_state->ichSelected, dsc_state->firstFlat, dsc_state->flatnessType,
+		dsc_state->origIsFlat, dsc_state->prevFirstFlat);
 	for (unit=0; unit<dsc_state->unitsPerGroup; ++unit)
 		fprintf(trace_file, " u%d=%d,%d,%d pred%d=%d", unit,
 			dsc_state->quantizedResidual[unit][0], dsc_state->quantizedResidual[unit][1],

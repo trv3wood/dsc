@@ -24,6 +24,15 @@
 // ----------------------------------------------
 import dsce_defs_pkg::*;
 
+`ifdef DSC_FLATNESS_MODEL_SUBSTITUTE
+// 仅用于 A/B：调用独立 C++ function model，不进入综合实现。
+import "DPI-C" function int dsc_flatness_adjust_qp_model(
+    input int last_used_qp,
+    input int somewhat_flat_threshold,
+    input int very_flat_qp
+);
+`endif
+
 
 // ----------------------------------------------
 //  module declaration
@@ -71,7 +80,16 @@ module dsce_rate_adjust
     // --------------------------------------------------------------------------
     always_comb begin : CombLogic
         // ----- determine the end of line adjusted Qp ----- //
-        i_adjusted_qp = (i_last_used_qp_in_slice_line < i_somewhat_flat_threshold) ? dsce_adjust_qp_somewhat_flat(dsc_rc_primary_qp_in) : i_very_flat_qp;
+`ifdef DSC_FLATNESS_MODEL_SUBSTITUTE
+        i_adjusted_qp = tDSC_QLEVEL'(dsc_flatness_adjust_qp_model(
+            i_last_used_qp_in_slice_line,
+            i_somewhat_flat_threshold,
+            i_very_flat_qp
+        ));
+`else
+        // DSC 1.2 行尾强制 flatness 使用本行最后实际采用的 QP，而非下一组 RC QP。
+        i_adjusted_qp = (i_last_used_qp_in_slice_line < i_somewhat_flat_threshold) ? dsce_adjust_qp_somewhat_flat(i_last_used_qp_in_slice_line) : i_very_flat_qp;
+`endif
 
         // ----- adjust the qp for rate control ----- //
         if (i_orig_is_flat == 1'b1) begin
@@ -126,4 +144,3 @@ module dsce_rate_adjust
     end : QPMod
 
 endmodule : dsce_rate_adjust
-

@@ -52,7 +52,7 @@ module dsce_vlc
     input  tDSC_QLEVEL              dsc_qlevel_c_in,                // quant level, co/cg
     input  logic                    dsc_ich_selected_in,            // ICH mode selected
     input  tDSC_ICH_INDEX           dsc_ich_index_in,               // ICH mode index
-    input  logic [1:0]              dsc_flatness_in,                // group flatness indicator
+    input  tDSC_FLAT_FLAGS          dsc_flatness_in,                // group flatness indicator
 
     // RC outputs
     output logic                    dsc_unit_size_valid,            // coded unit size and rc unit size valid
@@ -186,7 +186,7 @@ module dsce_vlc
 
         // flatness logic
         i_next_flatness_check = (pCOLOR_SELECT == 0 && (dsc_primary_qp_in >= i_flatness_min_qp && dsc_primary_qp_in <= i_flatness_max_qp)) ? 1'b1 : 1'b0;
-        i_next_flatness_bit = {16'd0};
+        i_next_flatness_bit = {15'd0, dsc_flatness_in.next_flatness_flag} << i_prefix_size;
         i_flatness_size = (i_group_index == 2'd3) ? {4'b0000, i_next_flatness_check} : 5'd0;
     end : SignalMap
 
@@ -338,8 +338,21 @@ module dsce_vlc
                         end // next_flatness_flag
 
                         2'd0:  begin
-                            dsc_vlc_size_out <= i_prefix_size;
-                            dsc_vlc_data_out <= i_prefix_data;
+                            if (pCOLOR_SELECT == 0 && dsc_flatness_in.send_flatness) begin
+                                if (dsc_primary_qp_in >= dsce_get_somewhat_flat_threshold(cfg_pps.bits_per_component)) begin
+                                    dsc_vlc_size_out <= i_prefix_size + 5'd3;
+                                    dsc_vlc_data_out <= ({13'd0, dsc_flatness_in.flatness_type,
+                                                         dsc_flatness_in.first_flat} << i_prefix_size) |
+                                                        i_prefix_data;
+                                end else begin
+                                    dsc_vlc_size_out <= i_prefix_size + 5'd2;
+                                    dsc_vlc_data_out <= ({14'd0, dsc_flatness_in.first_flat} << i_prefix_size) |
+                                                        i_prefix_data;
+                                end
+                            end else begin
+                                dsc_vlc_size_out <= i_prefix_size;
+                                dsc_vlc_data_out <= i_prefix_data;
+                            end
                         end // flatness position and type
 
                         default:  begin
@@ -398,4 +411,3 @@ module dsce_vlc
     end : VLC
 
 endmodule : dsce_vlc
-
