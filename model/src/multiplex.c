@@ -15,7 +15,7 @@
 *
 *  Without limiting the foregoing, you agree that your use
 *  of this software program does not convey any rights to you in any of
-*  Broadcom�s patent and other intellectual property, and you
+ *  Broadcom's patent and other intellectual property, and you
 *  acknowledge that your use of this software may require that
 *  you separately obtain patent or other intellectual property
 *  rights from Broadcom or third parties.
@@ -49,6 +49,53 @@
 #include "fifo.h"
 #include "dsc_types.h"
 #include "dsc_utils.h"
+
+// 设置 DSC_MUX_TRACE 时，记录 function model 输出的每个 muxword 及其子流来源。
+static void TraceMuxword(int ssp, int group, const unsigned char *word, int bytes)
+{
+	static FILE *trace_file;
+	static int trace_initialized;
+	const char *trace_path;
+	int j;
+
+	if (!trace_initialized)
+	{
+		trace_path = getenv("DSC_MUX_TRACE");
+		if (trace_path && trace_path[0])
+			trace_file = fopen(trace_path, "wt");
+		trace_initialized = 1;
+	}
+	if (!trace_file)
+		return;
+
+	fprintf(trace_file, "ssp=%d group=%d data=", ssp, group);
+	for (j=0; j<bytes; ++j)
+		fprintf(trace_file, "%02x", word[j]);
+	fputc('\n', trace_file);
+	fflush(trace_file);
+}
+
+// 记录送入 muxword packer 的 VLC 片段；data 只保留 RTL 接口可见的低 16 位。
+static void TraceVlcFragment(int ssp, int group, int data, int bits)
+{
+	static FILE *trace_file;
+	static int trace_initialized;
+	const char *trace_path;
+
+	if (!trace_initialized)
+	{
+		trace_path = getenv("DSC_VLC_TRACE");
+		if (trace_path && trace_path[0])
+			trace_file = fopen(trace_path, "wt");
+		trace_initialized = 1;
+	}
+	if (!trace_file)
+		return;
+
+	fprintf(trace_file, "ssp=%d group=%d size=%d data=%04x\n",
+		ssp, group, bits, (unsigned int)data & 0xffffu);
+	fflush(trace_file);
+}
 
 /*! \file multiplex.c
  *    Substream multiplex support functions */
@@ -88,6 +135,7 @@ void WriteEntryToBitstream(dsc_cfg_t *dsc_cfg, dsc_state_t *dsc_state, unsigned 
 	\param nbits     Number of bits to add */
 void AddBits(dsc_cfg_t *dsc_cfg, dsc_state_t *dsc_state, int CType, int d, int nbits)
 {
+	TraceVlcFragment(CType, dsc_state->groupCountLine, d, nbits);
 	fifo_put_bits(&(dsc_state->encBalanceFifo[CType]), d, nbits);
 	dsc_state->numBits += nbits;
 }
@@ -117,6 +165,7 @@ void ProcessGroupEnc(dsc_cfg_t *dsc_cfg, dsc_state_t *dsc_state, unsigned char *
 {
 	int i, j;
 	unsigned char d;
+	unsigned char muxword[8];
 	int sz;
 
 
@@ -142,8 +191,11 @@ void ProcessGroupEnc(dsc_cfg_t *dsc_cfg, dsc_state_t *dsc_state, unsigned char *
 				{
 					d = getbits(8, buf, &dsc_state->numBits, 0);
 				}
-				fifo_put_bits(&dsc_state->shifter[i], d, 8);				
+				fifo_put_bits(&dsc_state->shifter[i], d, 8);
+				muxword[j] = d;
 			}
+			if (dsc_state->isEncoder)
+				TraceMuxword(i, dsc_state->groupCountLine, muxword, dsc_cfg->mux_word_size / 8);
 		}
 		// Virtual decoder
 		sz = fifo_get_bits(&(dsc_state->seSizeFifo[i]), 8, 0);

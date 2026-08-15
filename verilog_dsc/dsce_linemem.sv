@@ -802,7 +802,14 @@ module dsce_linemem
     gram_bist_1r1w
     # (
         .pADDRESS_BITS (kLINE_ADDR_BITS),
-        .pDATA_BITS    (96)
+        .pDATA_BITS    (96),
+`ifdef DSC_LINEMEM_ASYNC_READ
+        .pREAD_LATENCY (0)
+`elsif DSC_LINEMEM_TWO_CYCLE_READ
+        .pREAD_LATENCY (2)
+`else
+        .pREAD_LATENCY (1)
+`endif
     ) line_buffer_inst
     (
         // port a, read port
@@ -821,4 +828,3 @@ module dsce_linemem
     );
 
 endmodule : dsce_linemem
-

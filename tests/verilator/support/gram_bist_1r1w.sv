@@ -2,7 +2,8 @@
 module gram_bist_1r1w #(
     parameter int pRW_CHECK     = 0,
     parameter int pADDRESS_BITS = 8,
-    parameter int pDATA_BITS    = 8
+    parameter int pDATA_BITS    = 8,
+    parameter int pREAD_LATENCY = 1
 ) (
     input  logic                     clk_r,
     input  logic                     en_r,
@@ -35,11 +36,25 @@ module gram_bist_1r1w #(
         end
     end
 `else
-    // 默认语义：使能后在读时钟边沿更新输出，即一拍同步读。
-    always_ff @(posedge clk_r) begin
-        if (en_r)
-            data_r <= memory[addr_r];
-    end
+    generate
+        if (pREAD_LATENCY == 0) begin : gen_async_read
+            always_comb data_r = memory[addr_r];
+        end else if (pREAD_LATENCY == 2) begin : gen_two_cycle_read
+            logic [pDATA_BITS-1:0] read_pipeline;
+            always_ff @(posedge clk_r) begin
+                if (en_r) begin
+                    read_pipeline <= memory[addr_r];
+                    data_r <= read_pipeline;
+                end
+            end
+        end else begin : gen_one_cycle_read
+            // 默认语义：使能后在读时钟边沿更新输出，即一拍同步读。
+            always_ff @(posedge clk_r) begin
+                if (en_r)
+                    data_r <= memory[addr_r];
+            end
+        end
+    endgenerate
 `endif
 
     always_comb begin
@@ -48,5 +63,5 @@ module gram_bist_1r1w #(
 
     // 防止未使用兼容参数和端口被误认为功能逻辑。
     logic unused;
-    always_comb unused = ^{pRW_CHECK, bist_in};
+    always_comb unused = ^{pRW_CHECK, pREAD_LATENCY, bist_in};
 endmodule

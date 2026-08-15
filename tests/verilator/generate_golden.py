@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import random
 import subprocess
 from pathlib import Path
@@ -56,6 +57,36 @@ def write_hex(path: Path, data: bytes) -> None:
     path.write_text("".join(f"{value:02x}\n" for value in data), encoding="ascii")
 
 
+def split_mux_trace(trace_path: Path, generated: Path) -> list[int]:
+    """把 C model mux trace 拆成与 RTL 48-bit 数值方向一致的三个子流。"""
+    muxwords: list[list[int]] = [[], [], []]
+    for line in trace_path.read_text(encoding="ascii").splitlines():
+        fields = dict(field.split("=", 1) for field in line.split())
+        ssp = int(fields["ssp"])
+        stream_bytes = bytes.fromhex(fields["data"])
+        muxwords[ssp].append(int.from_bytes(stream_bytes, byteorder="little"))
+    for ssp, words in enumerate(muxwords):
+        (generated / f"expected_ssp{ssp}_muxwords.hex").write_text(
+            "".join(f"{word:012x}\n" for word in words), encoding="ascii"
+        )
+    return [len(words) for words in muxwords]
+
+
+def split_vlc_trace(trace_path: Path, generated: Path) -> list[int]:
+    """把 C model VLC 调用序列编码为 {size[4:0], data[15:0]}。"""
+    fragments: list[list[int]] = [[], [], []]
+    for line in trace_path.read_text(encoding="ascii").splitlines():
+        fields = dict(field.split("=", 1) for field in line.split())
+        ssp = int(fields["ssp"])
+        packed = (int(fields["size"]) << 16) | int(fields["data"], 16)
+        fragments[ssp].append(packed)
+    for ssp, values in enumerate(fragments):
+        (generated / f"expected_ssp{ssp}_vlc.hex").write_text(
+            "".join(f"{value:06x}\n" for value in values), encoding="ascii"
+        )
+    return [len(values) for values in fragments]
+
+
 def main() -> None:
     args = parse_args()
     repository = Path(__file__).resolve().parents[2]
@@ -92,11 +123,23 @@ def main() -> None:
     (generated / "source_list.txt").write_text(f"{source}\n", encoding="ascii")
 
     subprocess.run(["make", "model"], cwd=repository, check=True)
+    mux_trace = generated / "c_mux_trace.txt"
+    vlc_trace = generated / "c_vlc_trace.txt"
+    group_trace = generated / "c_group_trace.txt"
+    rate_trace = generated / "c_rate_trace.txt"
+    model_environment = os.environ.copy()
+    model_environment["DSC_MUX_TRACE"] = str(mux_trace)
+    model_environment["DSC_VLC_TRACE"] = str(vlc_trace)
+    model_environment["DSC_GROUP_TRACE"] = str(group_trace)
+    model_environment["DSC_RATE_TRACE"] = str(rate_trace)
     subprocess.run(
         [str(repository / "model/src/dsc"), "-F", str(config)],
         cwd=generated,
+        env=model_environment,
         check=True,
     )
+    muxword_counts = split_mux_trace(mux_trace, generated)
+    vlc_counts = split_vlc_trace(vlc_trace, generated)
 
     stream = (generated / "rgb_96x108.dsc").read_bytes()
     if stream[:4] != b"DSCF":
@@ -107,7 +150,9 @@ def main() -> None:
     write_hex(generated / "expected_payload.hex", payload)
     (generated / "metadata.txt").write_text(
         f"width={WIDTH}\nheight={HEIGHT}\nbeats={len(pixels) // 4}\n"
-        f"payload_bytes={len(payload)}\nseed=0x{args.seed:x}\n",
+        f"payload_bytes={len(payload)}\nseed=0x{args.seed:x}\n"
+        f"ssp_muxwords={','.join(str(count) for count in muxword_counts)}\n"
+        f"ssp_vlc_fragments={','.join(str(count) for count in vlc_counts)}\n",
         encoding="ascii",
     )
     print(

@@ -15,7 +15,7 @@
 *
 *  Without limiting the foregoing, you agree that your use
 *  of this software program does not convey any rights to you in any of
-*  Broadcom�s patent and other intellectual property, and you
+ *  Broadcom's patent and other intellectual property, and you
 *  acknowledge that your use of this software may require that
 *  you separately obtain patent or other intellectual property
 *  rights from Broadcom or third parties.
@@ -79,6 +79,34 @@ int PredictSize(dsc_cfg_t *dsc_cfg, int *req_size);
 // debug dumping
 
 FILE *g_fp_dbg = 0;
+
+// 设置 DSC_GROUP_TRACE 时，记录每组进入 VLC 前的量化残差和码控状态。
+static void TraceGroupInput(dsc_state_t *dsc_state)
+{
+	static FILE *trace_file;
+	static int trace_initialized;
+	const char *trace_path;
+	int unit;
+
+	if (!trace_initialized)
+	{
+		trace_path = getenv("DSC_GROUP_TRACE");
+		if (trace_path && trace_path[0])
+			trace_file = fopen(trace_path, "wt");
+		trace_initialized = 1;
+	}
+	if (!trace_file)
+		return;
+
+	fprintf(trace_file, "group=%d qp=%d ich=%d", dsc_state->groupCountLine,
+		dsc_state->primaryQp, dsc_state->ichSelected);
+	for (unit=0; unit<dsc_state->unitsPerGroup; ++unit)
+		fprintf(trace_file, " u%d=%d,%d,%d pred%d=%d", unit,
+			dsc_state->quantizedResidual[unit][0], dsc_state->quantizedResidual[unit][1],
+			dsc_state->quantizedResidual[unit][2], unit, dsc_state->predictedSize[unit]);
+	fputc('\n', trace_file);
+	fflush(trace_file);
+}
 
 //-----------------------------------------------------------------------------
 // The following are constants that are used in the code:
@@ -1172,6 +1200,8 @@ void RemoveBitsEncoderBuffer(dsc_cfg_t *dsc_cfg, dsc_state_t *dsc_state)
 	\param group_size Number of pixels actually in group (could be smaller than nominal group size for partial groups) */
 void RateControl( dsc_cfg_t *dsc_cfg, dsc_state_t *dsc_state, int throttle_offset, int bpg_offset, int group_count, int scale, int group_size )
 {
+	static FILE *rate_trace_file;
+	static int rate_trace_initialized;
 	int i;
 	int prev_fullness;
 	int rcSizeGroup;
@@ -1371,6 +1401,24 @@ void RateControl( dsc_cfg_t *dsc_cfg, dsc_state_t *dsc_state, int throttle_offse
 
 	if ( overflowAvoid )
 		stQp = range_cfg[NUM_BUF_RANGES-1].range_max_qp;
+
+	// 设置 DSC_RATE_TRACE 时，记录码控每个 group 的真实输入、状态和决策。
+	if (!rate_trace_initialized)
+	{
+		const char *trace_path = getenv("DSC_RATE_TRACE");
+		if (trace_path && trace_path[0])
+			rate_trace_file = fopen(trace_path, "wt");
+		rate_trace_initialized = 1;
+	}
+	if (rate_trace_file)
+	{
+		fprintf(rate_trace_file,
+			"line=%d group=%d coded=%d rc=%d fullness=%d target=%d min=%d max=%d prev=%d prev2=%d next=%d range=%d\n",
+			dsc_state->vPos, dsc_state->groupCountLine, dsc_state->codedGroupSize,
+			rcSizeGroup, dsc_state->bufferFullness, rcTgtBitsGroup, min_QP, max_QP,
+			prevQp, prev2Qp, stQp, selected_range);
+		fflush(rate_trace_file);
+	}
 
 	rcSizeGroupPrev = rcSizeGroup;
 
@@ -1683,6 +1731,7 @@ void VLCGroup(dsc_cfg_t *dsc_cfg, dsc_state_t *dsc_state, unsigned char **byte_o
 
 	for(i=0; i<dsc_state->unitsPerGroup; ++i)
 		VLCUnit(dsc_cfg, dsc_state, i, dsc_state->quantizedResidual[i], force_p1_ich2);
+	TraceGroupInput(dsc_state);
 
 	// Keep track of fullness for each coded unit in the balance FIFO's
 	for (i=0; i<dsc_state->numSsps; ++i)
