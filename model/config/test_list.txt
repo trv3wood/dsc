@@ -1,3 +1,7 @@
-test_picture1.dpx
-test_picture2.dpx
-some_other_test.dpx
+../testdata/black.ppm
+../testdata/white.ppm
+../testdata/gradient.ppm
+../testdata/color_bars.ppm
+../testdata/checkerboard.ppm
+../testdata/fine_lines.ppm
+../testdata/noise.ppm

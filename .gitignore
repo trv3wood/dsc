@@ -3,6 +3,7 @@ model/src/*.o
 model/src/dsc
 
 # 参考模型运行产物
+model/testdata/
 model/config/log.txt
 model/config/*.dsc
 model/config/*.dpx
@@ -14,3 +15,7 @@ model/config/*.yuv
 *.fst
 *.wlf
 work/
+
+# Python 缓存
+__pycache__/
+*.pyc

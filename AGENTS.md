@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-`verilog_dsc/` contains the SystemVerilog DSC encoder RTL. The top level is `dsc_encoder.sv`; reusable blocks use the `dsce_*.sv` prefix, and shared declarations live in `dsce_defs_pkg.sv` and `dsce_regdefs_pkg.sv`. `model/` contains the C reference model: Linux sources are in `model/src/`, configurations in `model/config/`, original documentation in `model/docs/`, and Windows artifacts in `model/windows/`. `dsc_spec/` and `DSC v1.2b.pdf` are reference documents, not generated artifacts. Keep temporary simulations, waveforms, logs, and converted images outside the repository, preferably under `~/Work/dsc/`.
+`verilog_dsc/` contains the SystemVerilog DSC encoder RTL. The top level is `dsc_encoder.sv`; reusable blocks use the `dsce_*.sv` prefix, and shared declarations live in `dsce_defs_pkg.sv` and `dsce_regdefs_pkg.sv`. `model/` contains the C reference model: Linux sources are in `model/src/`, configurations in `model/config/`, generated inputs in the ignored `model/testdata/`, original documentation in `model/docs/`, and Windows artifacts in `model/windows/`. `dsc_spec/` and `DSC v1.2b.pdf` are reference documents, not generated artifacts. Keep temporary simulations, waveforms, logs, and converted outputs outside the repository, preferably under `~/Work/dsc/`.
 
 ## Build, Test, and Development Commands
 

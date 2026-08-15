@@ -27,9 +27,17 @@
 从仓库根目录执行：
 
 ```sh
+make images
 make model
 make model-run
 make model-clean
+```
+
+`make images` 默认在仓库的 `model/testdata/` 中生成 1920×1080 的 RGB PPM 规格图，包括纯黑、纯白、灰阶渐变、色条、棋盘格、单像素细线和固定种子噪声，并更新 `model/config/test_list.txt`。测试图是确定性生成的可再生产物，已被 Git 忽略；`make model-run` 会自动生成它们。列表使用相对路径，因此整个仓库可作为自包含测试 bundle 移动。也可自定义尺寸和目录：
+
+```sh
+python3 tools/generate_test_images.py --width 1280 --height 720 \
+  --output /tmp/dsc-images --list-output /tmp/dsc-images.txt
 ```
 
 `model-run` 会在 `model/config/` 中运行，以保持 `INCLUDE` 和 `SRC_LIST` 的原始相对路径语义。附带的 `test_list.txt` 只含占位图片名；运行前需换成实际 DPX/YUV/PPM 输入路径。Windows 工程不是 Linux 构建依赖。
