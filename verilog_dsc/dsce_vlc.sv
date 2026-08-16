@@ -392,8 +392,11 @@ module dsce_vlc
                 end : PipeS2
 
                 // residual 2
+                // PipeS3 在 valid 后 3 拍求值，此时 dsc_ich_selected_in（组合、仅 valid 拍有效）
+                // 已随真实 ICH 的时序回落为 0，必须与 PipeS1/S2 一致使用寄存的 i_ich_selected_in，
+                // 否则 ICH 组的第三个残差不会被抑制，产生多余的片段。
                 4'b1000:  begin  :  PipeS3
-                    if (dsc_ich_selected_in == 1'b1) begin
+                    if (i_ich_selected_in == 1'b1) begin
                         dsc_vlc_valid_out <= 1'b0;
                     end else begin
                         dsc_vlc_valid_out <= 1'b1;

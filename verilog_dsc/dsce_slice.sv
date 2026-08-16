@@ -398,7 +398,9 @@ module dsce_slice
         .dsc_force_mpp_in           (i_force_mpp),
         // ICH 的严格代价判据必须使用与预测/VLC 同一事务的 flatness 标志。
         // 独立 ICH flatness 流水在气泡周期会与 i_valid_pd 脱节。
-        .dsc_ich_next_is_very_flat  (i_vlc_flat_flags_aligned.group_flatness_type == kDSC_VERY_FLAT),
+        // 行末强制 VERY_FLAT 只用于码控的 flat QP，C model 的 IchDecision 对行末组
+        // 因 IsOrigFlatHIndex 的 hPos+1>=sliceWidth 提前返回非 flat，故同样排除。
+        .dsc_ich_next_is_very_flat  ((i_vlc_flat_flags_aligned.group_flatness_type == kDSC_VERY_FLAT) && !i_last_pd),
         .dsc_vlc_size_in            (i_vlc_size_dec),
         // predict pixel input
         .dsc_predict_valid_in       (i_valid_pd),
@@ -495,6 +497,7 @@ module dsce_slice
         .dsc_reset_n                (dsc_reset_n),
         .dsc_pps_update             (dsc_pps_update),
         .cfg_pps                    (cfg_pps),
+        .cfg_rc_range_max_qp_14     (cfg_rcps.rc_range_parameters[14][10:6]),
         // group input path
         .dsc_start_of_slice         (i_start_of_slice_slb),
         .dsc_group_valid_in         (i_valid_fd),

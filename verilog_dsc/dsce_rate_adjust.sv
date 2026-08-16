@@ -44,6 +44,7 @@ module dsce_rate_adjust
     input  logic                dsc_reset_n,                    // decoder reset
     input  logic                dsc_pps_update,                 // update pps parameters flag
     input  tDSC_PPS             cfg_pps,                        // parameter set output array
+    input  logic [4:0]          cfg_rc_range_max_qp_14,         // rc range 14 max qp (flatness gate)
 
     // group input path
     input  logic                dsc_start_of_slice,             // start of slice flag
@@ -70,6 +71,7 @@ module dsce_rate_adjust
     tDSC_QLEVEL                 i_very_flat_qp;
     tDSC_QLEVEL                 i_adjusted_qp;
     tDSC_QLEVEL                 i_last_used_qp_in_slice_line;
+    logic   [4:0]               i_range_max_qp_14;
     logic   [2:0]               i_valid_pipe, i_last_pipe;
     tDSC_QLEVEL                 i_rc_primary_qp_effective;
 
@@ -98,7 +100,9 @@ module dsce_rate_adjust
 `endif
 
         // ----- adjust the qp for rate control ----- //
-        if (i_orig_is_flat == 1'b1) begin
+        // C model 用 primaryQp < rc_range_parameters[14].range_max_qp 门控行末强制
+        // flat QP；本行最后实际采用的 QP 等价于行末组的 primaryQp。
+        if (i_orig_is_flat == 1'b1 && i_last_used_qp_in_slice_line < i_range_max_qp_14) begin
             dsc_primary_qp_out = i_adjusted_qp;
             dsc_prev_qp_out = i_adjusted_qp;
         end else begin
@@ -117,6 +121,7 @@ module dsce_rate_adjust
             i_somewhat_flat_threshold <= kDSC_QLEVEL_ZERO;
             i_dsc_version_2_active <= 1'b0;
             i_orig_is_flat <= 1'b0;
+            i_range_max_qp_14 <= 5'd0;
             i_valid_pipe <= 3'b000;
             i_last_pipe <= 3'b000;
             i_last_used_qp_in_slice_line <= kDSC_QLEVEL_ZERO;
@@ -128,6 +133,7 @@ module dsce_rate_adjust
                 i_very_flat_qp <= dsce_get_very_flat_qp(cfg_pps.bits_per_component);
                 i_dsc_version_2_active <= (cfg_pps.dsc_version_minor == 4'd2) ? 1'b1 : 1'b0;
                 i_somewhat_flat_threshold <= dsce_get_somewhat_flat_threshold(cfg_pps.bits_per_component);
+                i_range_max_qp_14 <= cfg_rc_range_max_qp_14;
             end // if
 
             // ----- record the last Qp used in the slice for the decision ----- //

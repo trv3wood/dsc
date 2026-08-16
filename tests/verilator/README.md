@@ -206,8 +206,49 @@ byte 2255。真实 MPP 改为在 valid 当拍锁存计算结果并随 valid 流�
 完整 RTL（不替换任何子模块）首差异推进到全局 group 671：`dsc_ich_next_is_very_flat`
 在真实 ICH 决策点为 1，而 function model 在同样事务看到 0，导致真实 ICH 以
 `log_ich>log_p` 拒绝 ICH，C model 却选 ICH。该信号 = `i_vlc_flat_flags_aligned.group_flatness_type
-== kDSC_VERY_FLAT`，function model 与真实 ICH 的采样时机不同；下一步需对齐真实 ICH
-对该信号的采样节拍，或在 ICH 内部用与 function model 相同的 registered 决策节拍。
+== kDSC_VERY_FLAT`。
+
+### ICH 行末、VLC 时序与码控门控修复
+
+在完整 RTL 基线上验证并修复了三个独立缺陷，`make rtl-e2e` 现对 seed `0x445343`
+端到端 PASS（15552 bytes 逐字节一致，SSP muxword 0 失配），且 `rtl-flatness-replay`
+与 `rtl-bp-replay` 均 0 失配。
+
+1. **ICH 决策误用行末强制 flatness**。`dsce_flat_flags` 在行末 flush 时把
+   `group_flatness_type` 强制为 `kDSC_VERY_FLAT`（供码控的行末 flat QP 使用），但
+   C model 的 `IchDecision` 调 `IsOrigFlatHIndex(dsc_state->hPos)`，行末因
+   `hPos+1>=sliceWidth` 提前返回非 flat。该强制值经 `i_vlc_flat_flags_aligned`
+   流入 ICH 的 `dsc_ich_next_is_very_flat`，导致行末组用 `log_ich<=log_p` 判据
+   错误拒绝 ICH。全量比对确认 108 处 `sent_vf != ich_flat` 全部是行末组。修复为
+   ICH 连接加 `!i_last_pd` 门控，与 `dsce_rate_adjust` 的 `dsc_flatness_flag`
+   先例一致。
+2. **`dsce_vlc` PipeS3 误用实时 `dsc_ich_selected_in`**。PipeS0-S2 分别在 valid 拍
+   与 valid 后 1-2 拍求值，PipeS3 在 valid 后 3 拍求值；真实 ICH 的组合
+   `dsc_ich_select_out` 在 `dsc_predict_valid_in` 回落后立即归零，PipeS3 因此
+   不会抑制 ICH 组的第三个残差，产生多余片段并错位 fragment/muxword 计数（首个
+   ICH 组 395 之前无 ICH 组故未暴露）。PipeS1/S2 已用寄存的 `i_ich_selected_in`，
+   修复为 PipeS3 同样使用。
+3. **`dsce_rate_adjust` 无条件应用行末 flat QP**。C model 用
+   `primaryQp < rc_range_parameters[14].range_max_qp`（8bpc 12bpp 下为 11）门控
+   行末强制 flat QP；RTL 原实现无条件把 `dsc_primary_qp_out`/`dsc_prev_qp_out`
+   置为 flat QP。seed `0x1234` 行末组 primaryQp=11 时被错误压到 very_flat_qp=1。
+   新增 `cfg_rc_range_max_qp_14` 输入（取 `rc_range_parameters[14][10:6]`），用
+   `i_last_used_qp_in_slice_line < i_range_max_qp_14` 门控。
+
+`dsce_flatness` 的 `cfg_rc_range_max_qp_14` 连接使用 `[9:5]`，但 `tDSC_RC_RANGE_PARAMETERS`
+中 `range_max_qp` 实际位于 `[10:6]`（`dsce_rate` 正确）；该信号在 `dsce_flat_flags`
+中未使用，属死信号，未改。
+
+### seed `0x1234` 剩余差异
+
+`make rtl-e2e GOLDEN_SEED=0x1234` 仍未通过。在三个修复之上，首个 VLC 输入差异推进到
+全局 group 1889（line 59 group 1）：色度 predicted size `4/3/3` vs `4/1/3`。全 RTL
+与 `rtl-e2e-ich-model`（真实 BP + function model ICH）在全局 group 512（首个 ICH 组
+511 之后）的重建反馈首次分叉：两基线在该组的 VLC 输入都匹配 golden，但 function
+model 的 ICH 像素与真实 RTL 差一个小量，落在量化容差内，累积后分别在 1889（全 RTL）
+与 2048（ich-model，QP 差异）暴露。这说明 seed `0x1234` 涉及 ICH history 重建累积
+精度与码控边界两个层面，需在 `dsce_ich_history`/function model 的逐组像素级比对
+上继续排查，当前不作为通过基准。
 
 ## 仿真假设
 
