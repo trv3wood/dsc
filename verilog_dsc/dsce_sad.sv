@@ -39,6 +39,8 @@ module dsce_sad
     input  logic                    dsc_clk,            // DSC processing clock
     input  logic                    dsc_reset_n,        // DSC domain reset
     input  var tDSC_COLOR_MODE      dsc_color_mode,     // color mode
+    input  logic [3:0]              dsc_bpc,            // bits per component
+    input  logic                    dsc_convert_rgb,    // YCoCg chroma uses bpc+1
 
     // data path, two lines
     input  logic                    dsc_valid_in,       // valid data in
@@ -63,18 +65,29 @@ module dsce_sad
     logic [10:0]        i_sad9x1;
     logic               i_sad3x1_valid;
 
-    // compute the difference of a single component
+    // compute the difference of a single component, shifted by the component's quantization offset
     function automatic logic [5:0] modified_abs_diff (
         input [15:0] ref_cpnt,
-        input [15:0] src_cpnt
+        input [15:0] src_cpnt,
+        input [3:0]  shift
     );
         logic signed [16:0] signed_diff;
         logic [15:0] abs_diff;
+        logic [15:0] shifted;
 
         signed_diff = $signed({1'b0, ref_cpnt}) - $signed({1'b0, src_cpnt});
         abs_diff = (signed_diff[16] == 1'b1) ? (~signed_diff[15:0] + 16'd1) : signed_diff[15:0];
-        modified_abs_diff = (abs_diff[15] == 1'b1) ? 6'h3f : abs_diff[14:9];
+        shifted = abs_diff >> shift;
+        modified_abs_diff = (shifted > 6'h3f) ? 6'h3f : shifted[5:0];
     endfunction : modified_abs_diff
+
+    // 每个分量的 SAD 位移 = cpntBitDepth - 7；YCoCg 下色度位深为 bpc+1。
+    logic [3:0] i_y_shift;
+    logic [3:0] i_c_shift;
+    always_comb begin : ShiftSelect
+        i_y_shift = dsc_bpc - 4'd7;
+        i_c_shift = dsc_bpc + (dsc_convert_rgb ? 4'd1 : 4'd0) - 4'd7;
+    end : ShiftSelect
 
     // ------------------------------------------------------------------------------------------------------------
     //                                             processes
@@ -82,9 +95,9 @@ module dsce_sad
 
     genvar dx;
     generate for (dx = 0; dx < 9; dx++) begin : gen_component_mad
-            assign i_mad_y[dx]  = {4'h0, modified_abs_diff(dsc_ref_in[dx].y,  dsc_search_in[dx].y)};
-            assign i_mad_co[dx] = {4'h0, modified_abs_diff(dsc_ref_in[dx].co, dsc_search_in[dx].co)};
-            assign i_mad_cg[dx] = {4'h0, modified_abs_diff(dsc_ref_in[dx].cg, dsc_search_in[dx].cg)};
+            assign i_mad_y[dx]  = {4'h0, modified_abs_diff(dsc_ref_in[dx].y,  dsc_search_in[dx].y,  i_y_shift)};
+            assign i_mad_co[dx] = {4'h0, modified_abs_diff(dsc_ref_in[dx].co, dsc_search_in[dx].co, i_c_shift)};
+            assign i_mad_cg[dx] = {4'h0, modified_abs_diff(dsc_ref_in[dx].cg, dsc_search_in[dx].cg, i_c_shift)};
     end endgenerate
 
     always_comb begin : Clamp

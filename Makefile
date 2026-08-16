@@ -157,5 +157,37 @@ rtl-flatness-replay:
 		tests/verilator/tb_dsc_flatness_replay.sv
 	./obj_dir/Vtb_dsc_flatness_replay
 
+# 在 ICH function model 基线上使用真实 dsce_bpvector，验证 BP 实现。
+rtl-e2e-ich-model: golden
+	verilator --binary --timing --assert -Wall -Wno-fatal \
+		-Wno-WIDTH -Wno-UNUSED -Wno-IMPORTSTAR -Wno-PINCONNECTEMPTY \
+		-Wno-BLKSEQ -Wno-DECLFILENAME -Wno-GENUNNAMED -Wno-MULTIDRIVEN \
+		-Wno-TIMESCALEMOD -DDSC_ICH_MODEL_SUBSTITUTE \
+		--top-module tb_dsc_e2e -f tests/verilator/rtl.f \
+		tests/verilator/tb_dsc_e2e.sv tests/verilator/model/ich_function_model.cpp
+	./obj_dir/Vtb_dsc_e2e
+
+# 捕获真实顶层的 dsce_bpvector 输入事务，供独立 replay 使用。
+rtl-bp-capture: golden
+	verilator --binary --timing --assert -Wall -Wno-fatal \
+		-Wno-WIDTH -Wno-UNUSED -Wno-IMPORTSTAR -Wno-PINCONNECTEMPTY \
+		-Wno-BLKSEQ -Wno-DECLFILENAME -Wno-GENUNNAMED -Wno-MULTIDRIVEN \
+		-Wno-TIMESCALEMOD -DDSC_BPVECTOR_MODEL_SUBSTITUTE -DDSC_ICH_MODEL_SUBSTITUTE -DDSC_BP_CAPTURE \
+		--top-module tb_dsc_e2e -f tests/verilator/rtl.f \
+		tests/verilator/tb_dsc_e2e.sv tests/verilator/model/bpvector_function_model.cpp \
+		tests/verilator/model/ich_function_model.cpp
+	./obj_dir/Vtb_dsc_e2e
+
+# 用同一顶层输入 trace 对比 RTL dsce_bpvector 与 function model。
+rtl-bp-replay:
+	verilator --binary --timing --assert -Wall -Wno-fatal \
+		-Wno-WIDTH -Wno-UNUSED -Wno-IMPORTSTAR -Wno-BLKSEQ -Wno-TIMESCALEMOD \
+		-DDSC_BPVECTOR_MODEL_SUBSTITUTE \
+		--top-module tb_dsc_bp_replay \
+		verilog_dsc/dsce_defs_pkg.sv verilog_dsc/dsce_sad.sv \
+		verilog_dsc/dsce_bpvector.sv verilog_dsc/dsce_bpvector_function_model.sv \
+		tests/verilator/tb_dsc_bp_replay.sv tests/verilator/model/bpvector_function_model.cpp
+	./obj_dir/Vtb_dsc_bp_replay
+
 rtl-clean:
 	rm -rf obj_dir

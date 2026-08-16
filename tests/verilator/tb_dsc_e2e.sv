@@ -178,6 +178,46 @@ module tb_dsc_e2e;
     end
 `endif
 
+`ifdef DSC_BP_CAPTURE
+    // 转储真实顶层的 dsce_bpvector 输入事务，用于独立 replay 对比 RTL 与 function model。
+    integer       bp_capture_file;
+    int           bp_capture_count = 0;
+
+    function automatic void bp_pixel_fwrite(integer fh, tDSC_PIXEL px);
+        $fwrite(fh, "%012x", {px.cg[15:0], px.co[15:0], px.y[15:0]});
+    endfunction
+
+    initial begin
+        bp_capture_file = $fopen("tests/verilator/generated/bp_input_trace.txt", "w");
+        if (bp_capture_file == 0)
+            $fatal(1, "无法创建 BP 输入 trace");
+    end
+
+    always @(posedge dsc_clk) begin : BpInputCapture
+        if (async_reset_n &&
+            dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_valid_fd) begin
+            $fwrite(bp_capture_file, "%0d", dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_last_fd);
+            for (int bp_sample = 0; bp_sample < 3; bp_sample++) begin
+                $fwrite(bp_capture_file, " ");
+                bp_pixel_fwrite(bp_capture_file,
+                    dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_group_fd[bp_sample]);
+            end
+            for (int bp_prev = 0; bp_prev < 6; bp_prev++) begin
+                $fwrite(bp_capture_file, " ");
+                bp_pixel_fwrite(bp_capture_file,
+                    dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_prev_line_mmap[bp_prev]);
+            end
+            for (int bp_rec = 0; bp_rec < 3; bp_rec++) begin
+                $fwrite(bp_capture_file, " ");
+                bp_pixel_fwrite(bp_capture_file,
+                    dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_recon_dec[bp_rec]);
+            end
+            $fwrite(bp_capture_file, "\n");
+            bp_capture_count++;
+        end
+    end
+`endif
+
     // 在下降沿观察下一次 VLC 采样前已稳定的组合信号，排除上升沿 NBA 调度影响。
 `ifndef DSC_ICH_MODEL_SUBSTITUTE
     always @(negedge dsc_clk) begin : StableIchTrace
@@ -379,6 +419,7 @@ module tb_dsc_e2e;
         if (dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_valid_pd) begin
             if (vlc_input_group == 25 ||
                 (vlc_input_group >= 37 && vlc_input_group <= 41) ||
+                (vlc_input_group >= 60 && vlc_input_group <= 64) ||
                 (vlc_input_group >= 384 && vlc_input_group <= 386) ||
                 vlc_input_group == 395 || vlc_input_group == 504 || vlc_input_group == 540 ||
                 vlc_input_group == 671) begin

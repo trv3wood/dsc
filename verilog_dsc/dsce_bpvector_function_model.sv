@@ -55,6 +55,8 @@ module dsce_bpvector_function_model
     int model_vector;
     longint unsigned model_predict [2:0];
     longint unsigned model_residual [2:0];
+    int model_group = 0;
+    int model_line = 0;
 
     always_ff @(posedge dsc_clk or negedge dsc_reset_n) begin : ModelAdapter
         if (!dsc_reset_n) begin
@@ -71,6 +73,8 @@ module dsce_bpvector_function_model
             dsc_bpvector <= 4'd0;
             dsc_predict_out <= '{default: kDSC_PIXEL_INIT};
             dsc_residual_out <= '{default: kDSC_RESIDUAL_PIXEL_INIT};
+            model_group = 0;
+            model_line = 0;
         end else begin
             valid_pipe <= {valid_pipe[1:0], dsc_valid_in};
             last_pipe <= {last_pipe[1:0], dsc_valid_in && dsc_last_in};
@@ -95,6 +99,12 @@ module dsce_bpvector_function_model
                 for (int sample = 0; sample < 3; sample++) begin
                     dsc_predict_out[sample] <= tDSC_PIXEL'(model_predict[sample][47:0]);
                     dsc_residual_out[sample] <= tDSC_RESIDUAL_PIXEL'(model_residual[sample][50:0]);
+                end
+                if (dsc_last_in) begin
+                    model_group = 0;
+                    model_line++;
+                end else begin
+                    model_group++;
                 end
             end
         end
