@@ -260,7 +260,8 @@ extern "C" void dsc_ich_model_decide(
 
     if ((state.group_count - 1 >= 392 && state.group_count - 1 <= 398) ||
         state.group_count - 1 == 504 ||
-        (state.group_count - 1 >= 588 && state.group_count - 1 <= 594)) {
+        (state.group_count - 1 >= 588 && state.group_count - 1 <= 594) ||
+        (state.group_count - 1 >= 668 && state.group_count - 1 <= 674)) {
         std::fprintf(stderr,
             "ICH_MODEL group=%d hit=%d%d%d idx=%d/%d/%d bits=%d/%d log=%d/%d cost=%d/%d flat=%d force=%d choose=%d\n",
             state.group_count - 1,

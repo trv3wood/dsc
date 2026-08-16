@@ -183,6 +183,32 @@ byte 2255。真实 MPP 改为在 valid 当拍锁存计算结果并随 valid 流�
 之前，`rtl-e2e-bp-model` 系基线仍是可信上游。修复 BP 后应恢复真实 ICH 与 VLC，
 再跑端到端、flatness replay 和多 seed 回归。
 
+### 真实 BP vector 实现
+
+重写 `dsce_bpvector` 使其与参考模型 `BlockPredSearch` 及已验证的 function model 完全一致。
+`make rtl-e2e-ich-model`（真实 BP + ICH function model）端到端 PASS；独立
+`make rtl-bp-replay` 对 3456 groups 的 use_bp/vector/predict/residual 全部 0 失配。
+修复要点：
+
+1. 前一行重建改用绝对像素位置数组 `i_prev_arr`，替代原 6 像素移位寄存器
+   （后者窗口重复/错位，无法提供 x-6..x+2 的正确 9 像素窗口）。
+2. SAD 窗口按 `max(0,x-6)..x+2` 截断，`p<=candidate` 时用中点
+   （luma=1<<(bpc-1)，chroma=1<<bpc，注意 chroma 不是 bpc+1）。
+3. `modified_abs_diff` 移位量按分量 = cpntBitDepth-7（8bpc 下 luma=1,chroma=2），
+   修复 `abs_diff>>shift` 结果被 6 位截断为 0 的问题（`dsce_sad` 同病）。
+4. 候选选择改为运行最小值扫描（`i_bpsad[0]` 为 MAP 基线，平局保留小索引），
+   替代原决策树（平局偏好大索引）；`dsc_bpvector` 输出=selected（0 或 2..9）。
+5. use_bp 决策含 line>0、bp_count>=3、last_edge<3；bp_count/edge 行尾清零在
+   use_bp 之后，行尾组仍能使用更新后的计数（原实现把行尾 next_bpcount 清 0）。
+6. 当前组 x 用 `i_cur_x` 捕获（`i_hpos` 已推进到下一组），修正 SAD/edge 使用错误 x。
+7. 残差符号修正（`dsce_compute_residual` 参数顺序为 predict, orig）。
+
+完整 RTL（不替换任何子模块）首差异推进到全局 group 671：`dsc_ich_next_is_very_flat`
+在真实 ICH 决策点为 1，而 function model 在同样事务看到 0，导致真实 ICH 以
+`log_ich>log_p` 拒绝 ICH，C model 却选 ICH。该信号 = `i_vlc_flat_flags_aligned.group_flatness_type
+== kDSC_VERY_FLAT`，function model 与真实 ICH 的采样时机不同；下一步需对齐真实 ICH
+对该信号的采样节拍，或在 ICH 内部用与 function model 相同的 registered 决策节拍。
+
 ## 仿真假设
 
 原始 RTL 包不含 `gprim_sync_stage`、`gprim_sync2_stage` 和 `gram_bist_1r1w`。`support/` 提供仅用于仿真的模型：同步器保留一拍/两拍延迟，RAM 使用同步读写，BIST 不建模。这些模型不能替代工艺库 CDC、冲突语义或 BIST 签核。
