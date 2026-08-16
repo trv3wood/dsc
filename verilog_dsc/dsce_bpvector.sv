@@ -42,6 +42,7 @@ module dsce_bpvector
     input  logic                        dsc_last_in,            // last group in a slice(???)
     input  tDSC_PIXEL                   dsc_group_in [2:0],     // source group input
     input  tDSC_PIXEL                   dsc_prev_line_in [5:0], // group from the previous line
+    input  tDSC_PIXEL                   dsc_recon_group_in [2:0], // 上一组重建像素反馈
 
     // pipelined output path
     output logic                        dsc_valid_out,          // valid predicted pixels out
@@ -266,4 +267,3 @@ module dsce_bpvector
     end endgenerate
 
 endmodule : dsce_bpvector
-

@@ -52,6 +52,7 @@ module tb_dsc_e2e;
     logic [14:0]  expected_group_predicted [0:3455];
     logic [4:0]   expected_group_qp [0:3455];
     logic         expected_group_ich [0:3455];
+    logic [14:0]  expected_group_ich_index [0:3455];
     int           output_count = 0;
     int           mismatch_count = 0;
     int           mux_output_count = 0;
@@ -85,11 +86,13 @@ module tb_dsc_e2e;
     int           flatness_aligned_group = 0;
     int           rate_qp_group = 0;
     int           vlc_input_group = 0;
+    int           vlc_stable_group = 0;
     int           predict_input_group = 0;
 
 `ifdef DSC_VLC_CAPTURE
     integer       vlc_capture_file;
     int           vlc_capture_count = 0;
+    int           vlc_capture_gap = 0;
 
     initial begin
         vlc_capture_file = $fopen("tests/verilator/generated/vlc_input_trace.hex", "w");
@@ -98,10 +101,11 @@ module tb_dsc_e2e;
     end
 
     always @(posedge dsc_clk) begin : VlcInputCapture
+        vlc_capture_gap++;
         if (async_reset_n &&
             dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_valid_pd) begin
             $fwrite(vlc_capture_file, "%064x\n", {
-                33'd0,
+                vlc_capture_gap[32:0],
                 dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_last_pd,
                 dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_primary_qp_res,
                 dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_qlevel_y_res,
@@ -127,14 +131,37 @@ module tb_dsc_e2e;
                 dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[1].res_cg,
                 dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[2].res_cg});
             vlc_capture_count++;
-            if (vlc_capture_count == 95) begin
+            vlc_capture_gap = 0;
+            if (vlc_capture_count == 511) begin
                 $fclose(vlc_capture_file);
-                $display("VLC_CAPTURE groups=96");
+                $display("VLC_CAPTURE groups=512");
                 $finish;
             end
         end
     end
 `endif
+
+    // 在下降沿观察下一次 VLC 采样前已稳定的组合信号，排除上升沿 NBA 调度影响。
+    always @(negedge dsc_clk) begin : StableIchTrace
+        if (async_reset_n && dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_valid_pd) begin
+            if (vlc_stable_group == 395 || vlc_stable_group == 504 ||
+                vlc_stable_group == 540 || vlc_stable_group == 671) begin
+                $display("ICH_STABLE group=%0d select=%0b index=%0d/%0d/%0d decision_hit=%03b ich_hit=%03b port_hit=%03b raw_hit=%03b mpp_tag=%0d cand_tag=%0d",
+                         vlc_stable_group,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_ich_selected_dec,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_index_ich[0],
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_index_ich[1],
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_index_ich[2],
+                         &dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_ich_inst.dsce_ich_decision_inst.dsc_ich_hit,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_ich_inst.i_ich_hit,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_ich_inst.dsce_ich_decision_inst.dsc_ich_hit,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_ich_inst.dsce_ich_candidate_inst.dsc_ich_hit,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_predict_inst.dsce_mpp_y_inst.i_debug_output_group,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_ich_inst.dsce_ich_candidate_inst.i_output_group_count);
+            end
+            vlc_stable_group++;
+        end
+    end
 
     always #5 apb_clk = ~apb_clk;
     always #4 axi_clk = ~axi_clk;
@@ -243,7 +270,26 @@ module tb_dsc_e2e;
             rate_qp_group++;
         end
         if (dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_valid_fd) begin
-            if (predict_input_group == 37) begin
+            if ((predict_input_group >= 37 && predict_input_group <= 40) ||
+                (predict_input_group >= 384 && predict_input_group <= 386)) begin
+                $display("MMAP_INPUT_Y group=%0d current=%0d,%0d,%0d right=%0d q=%0d",
+                         predict_input_group,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_group_fd[0].y,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_group_fd[1].y,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_group_fd[2].y,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_right_pixel_dec.y,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_qlevel_y);
+                $display("BP_RECON_FEEDBACK group=%0d y=%0d,%0d,%0d co=%0d,%0d,%0d cg=%0d,%0d,%0d",
+                         predict_input_group,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_recon_dec[0].y,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_recon_dec[1].y,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_recon_dec[2].y,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_recon_dec[0].co,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_recon_dec[1].co,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_recon_dec[2].co,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_recon_dec[0].cg,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_recon_dec[1].cg,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_recon_dec[2].cg);
                 $display("MMAP_INPUT_CO group=%0d,%0d,%0d prev=%0d,%0d,%0d,%0d,%0d,%0d right=%0d q=%0d",
                          dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_group_fd[0].co,
                          dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_group_fd[1].co,
@@ -292,9 +338,15 @@ module tb_dsc_e2e;
             flatness_source_group++;
         end
         if (dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_valid_pd) begin
-            if (vlc_input_group == 37) begin
-                $display("DECISION_BOUNDARY group=37 bp=%0b force=%0b ich_in=%0b qlevel=%0d/%0d mpp=%03b sizes=%0d/%0d/%0d",
+            if (vlc_input_group == 25 ||
+                (vlc_input_group >= 37 && vlc_input_group <= 41) ||
+                (vlc_input_group >= 384 && vlc_input_group <= 386) ||
+                vlc_input_group == 395 || vlc_input_group == 504 || vlc_input_group == 540 ||
+                vlc_input_group == 671) begin
+                $display("DECISION_BOUNDARY group=%0d bp=%0b vector=%0d force=%0b ich_in=%0b qlevel=%0d/%0d mpp=%03b sizes=%0d/%0d/%0d",
+                         vlc_input_group,
                          dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_use_bp_pd,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_predict_inst.i_bp_vector,
                          dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_force_mpp,
                          dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_ich_selected,
                          dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_qlevel_y_res,
@@ -315,8 +367,31 @@ module tb_dsc_e2e;
                              dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_decision_inst.i_predict_size[sample*3+0],
                              dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_decision_inst.i_predict_size[sample*3+1],
                              dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_decision_inst.i_predict_size[sample*3+2]);
+`ifndef DSC_ICH_MODEL_SUBSTITUTE
+                if (vlc_input_group == 395 || vlc_input_group == 504 || vlc_input_group == 540 ||
+                    vlc_input_group == 671)
+                    $display("ICH_RTL_COST group=%0d mpp_tag=%0d flat=%0b bits=%0d/%0d log=%0d/%0d cost=%0d/%0d valid=%0b select=%0b ich_out=%0b hit=%03b raw_hit=%03b cand_tag=%0d index=%0d/%0d/%0d",
+                             vlc_input_group,
+                             dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_predict_inst.dsce_mpp_y_inst.i_debug_output_group,
+                             dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_ich_inst.dsce_ich_decision_inst.dsc_ich_next_is_very_flat,
+                             dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_ich_inst.dsce_ich_decision_inst.i_bits_p_mode,
+                             dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_ich_inst.dsce_ich_decision_inst.i_bits_ich_mode,
+                             dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_ich_inst.dsce_ich_decision_inst.i_log_err_predict_mode,
+                             dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_ich_inst.dsce_ich_decision_inst.i_log_err_ich_mode,
+                             dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_ich_inst.dsce_ich_decision_inst.i_predict_mode_cost,
+                             dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_ich_inst.dsce_ich_decision_inst.i_ich_mode_cost,
+                             dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_ich_inst.dsce_ich_decision_inst.dsc_predict_valid_in,
+                             dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_ich_inst.dsce_ich_decision_inst.dsc_ich_select_out,
+                             dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_ich_selected,
+                             &dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_ich_inst.dsce_ich_decision_inst.dsc_ich_hit,
+                             dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_ich_inst.dsce_ich_candidate_inst.dsc_ich_hit,
+                             dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_ich_inst.dsce_ich_candidate_inst.i_output_group_count,
+                             dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_ich_inst.dsce_ich_candidate_inst.dsc_ich_index_out[0],
+                             dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_ich_inst.dsce_ich_candidate_inst.dsc_ich_index_out[1],
+                             dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_ich_inst.dsce_ich_candidate_inst.dsc_ich_index_out[2]);
+`endif
             end
-            if (vlc_input_group < 64) begin
+            if (vlc_input_group < 3456) begin
                 if (!expected_group_ich[vlc_input_group] &&
                     {dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[0].res_y,
                      dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[1].res_y,
@@ -328,12 +403,17 @@ module tb_dsc_e2e;
                      dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[1].res_cg,
                      dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[2].res_cg} !==
                     expected_group_residual[vlc_input_group])
+                begin
                     $display("VLC_INPUT_RESIDUAL_MISMATCH group=%0d", vlc_input_group);
+                    if ($test$plusargs("STOP_FIRST_BOUNDARY"))
+                        $fatal(1, "首个 VLC 输入残差差异");
+                end
                 if (!expected_group_ich[vlc_input_group] &&
                     {dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_vlc_size_dec[0],
                      dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_vlc_size_dec[1],
                      dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_vlc_size_dec[2]} !==
                     expected_group_predicted[vlc_input_group])
+                begin
                     $display("VLC_INPUT_PREDICTED_MISMATCH group=%0d expected=%0d/%0d/%0d actual=%0d/%0d/%0d",
                              vlc_input_group,
                              expected_group_predicted[vlc_input_group][14:10],
@@ -342,16 +422,43 @@ module tb_dsc_e2e;
                              dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_vlc_size_dec[0],
                              dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_vlc_size_dec[1],
                              dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_vlc_size_dec[2]);
+                    if ($test$plusargs("STOP_FIRST_BOUNDARY"))
+                        $fatal(1, "首个 VLC 输入 predicted-size 差异");
+                end
                 if (dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_primary_qp_res !==
                     expected_group_qp[vlc_input_group])
+                begin
                     $display("VLC_INPUT_QP_MISMATCH group=%0d expected=%0d actual=%0d",
                              vlc_input_group, expected_group_qp[vlc_input_group],
                              dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_primary_qp_res);
+                    if ($test$plusargs("STOP_FIRST_BOUNDARY"))
+                        $fatal(1, "首个 VLC 输入 QP 差异");
+                end
                 if (dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_ich_selected_dec !==
                     expected_group_ich[vlc_input_group])
+                begin
                     $display("VLC_INPUT_ICH_MISMATCH group=%0d expected=%0b actual=%0b",
                              vlc_input_group, expected_group_ich[vlc_input_group],
                              dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_ich_selected_dec);
+                    if ($test$plusargs("STOP_FIRST_BOUNDARY"))
+                        $fatal(1, "首个 VLC 输入 ICH 差异");
+                end
+                if (expected_group_ich[vlc_input_group] &&
+                    {dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_index_ich[0],
+                     dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_index_ich[1],
+                     dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_index_ich[2]} !==
+                    expected_group_ich_index[vlc_input_group]) begin
+                    $display("VLC_INPUT_ICH_INDEX_MISMATCH group=%0d expected=%0d/%0d/%0d actual=%0d/%0d/%0d",
+                             vlc_input_group,
+                             expected_group_ich_index[vlc_input_group][14:10],
+                             expected_group_ich_index[vlc_input_group][9:5],
+                             expected_group_ich_index[vlc_input_group][4:0],
+                             dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_index_ich[0],
+                             dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_index_ich[1],
+                             dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_index_ich[2]);
+                    if ($test$plusargs("STOP_FIRST_BOUNDARY"))
+                        $fatal(1, "首个 VLC 输入 ICH index 差异");
+                end
             end
             vlc_input_group++;
             if (flatness_aligned_group < 48 &&
@@ -371,7 +478,8 @@ module tb_dsc_e2e;
         if (dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_valid_fd)
             flatness_valid_count++;
         if (dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_valid_fd) begin
-            if (flat_adjust_group >= 28 && flat_adjust_group < 40)
+            if ((flat_adjust_group >= 28 && flat_adjust_group < 40) ||
+                (flat_adjust_group >= 380 && flat_adjust_group < 390))
                 $display("FLAT_ADJUST group=%0d last=%0b rc_qp=%0d out_qp=%0d saved_last=%0d orig_flat=%0b valid_pipe=%03b last_pipe=%03b",
                          flat_adjust_group,
                          dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_last_fd,
@@ -437,8 +545,9 @@ module tb_dsc_e2e;
             end
         end
         if (dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_valid_pipe[2]) begin
-            if (rate_group < 12)
-                $display("RATE group=%0d coded=%0d rc=%0d fullness=%0d target=%0d min=%0d max=%0d prev=%0d prev2=%0d next=%0d decisions=%02x edge=%0d factor=%0d v2=%0b cfgver=%0d",
+            if ((rate_group < 12) || ((rate_group >= 20) && (rate_group < 42)) ||
+                ((rate_group >= 380) && (rate_group < 390)))
+                $display("RATE group=%0d coded=%0d rc=%0d fullness=%0d target=%0d min=%0d max=%0d prev=%0d prev2=%0d current=%0d current_st=%0d inc=%0d/%0d next=%0d decisions=%02x edge=%0d factor=%0d v2=%0b cfgver=%0d",
                          rate_group,
                          dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_coded_group_size,
                          dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_rc_size_group,
@@ -448,6 +557,10 @@ module tb_dsc_e2e;
                          dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_max_qp,
                          dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_prev_qp,
                          dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_prev_2_qp,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_current_qp,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_current_qp_st,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_inc_qp[0],
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_inc_qp[1],
                          dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_st_qp,
                          dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_sterm_decisions,
                          dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_rc_size_group_edge,
@@ -542,6 +655,7 @@ module tb_dsc_e2e;
         $readmemh("tests/verilator/generated/group_predicted_expected.hex", expected_group_predicted);
         $readmemh("tests/verilator/generated/group_qp_expected.hex", expected_group_qp);
         $readmemh("tests/verilator/generated/group_ich_expected.hex", expected_group_ich);
+        $readmemh("tests/verilator/generated/group_ich_index_expected.hex", expected_group_ich_index);
         for (int index = 0; index < kSPC*4+2; index++)
             bist_sram_in[index] = 12'h000;
 

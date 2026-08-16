@@ -69,6 +69,9 @@ module dsce_decision
     output logic [4:0]              dsc_vlc_size_out [2:0]          // adjust size for VLC
 );
 
+    // ICH 的最终选择不依赖本模块内部状态，直接传递避免组合块之间的 delta 延迟。
+    assign dsc_ich_selected_out = dsc_ich_selected_in & ~dsc_force_mpp_in;
+
     // ------------------------------------------------------------------------------------------------------------
     //                                          internal definitions
     // ------------------------------------------------------------------------------------------------------------
@@ -153,15 +156,16 @@ module dsce_decision
             i_predict_residual[rx].res_cg = (i_use_mpp[2] == 1'b1) ? i_mpp_residual[rx].res_cg : i_mmap_bp_residual[rx].res_cg;
         end : PredictMappingLoop
 
-        // map internals to ports
+    end : SignalMap
+
+    always_comb begin : ICHOutputMap
+        // ICH 只影响最终模式标志，不参与预测像素和残差的生成。
         if (dsc_ich_selected_in == 1'b1 && dsc_force_mpp_in == 1'b0) begin
             dsc_mpp_out = 3'b000;
-            dsc_ich_selected_out = 1'b1;
         end else begin
             dsc_mpp_out = i_use_mpp;
-            dsc_ich_selected_out = 1'b0;
         end // if
-    end : SignalMap
+    end : ICHOutputMap
 
 
     // -------------------------------------------------------
@@ -231,7 +235,10 @@ module dsce_decision
         dsc_quant_residual_out = i_quantized_residual;
         dsc_predict_out = i_predict_pixel;
         dsc_residual_size_out = i_max_predict_size;
+    end : OutputGen
 
+    // 重建反馈只影响后续预测状态，不能反向参与当前 ICH 的候选代价计算。
+    always_comb begin : ReconOutput
         // reconstructed group out
         if (dsc_ich_selected_out == 1'b0) begin
             for (int sx = 0; sx < 3; sx++) begin : GroupReconLoop
@@ -252,7 +259,6 @@ module dsce_decision
         end else begin
             dsc_right_pixel_out = dsc_recon_group_out[2];
         end // if
-    end : OutputGen
+    end : ReconOutput
 
 endmodule : dsce_decision
-

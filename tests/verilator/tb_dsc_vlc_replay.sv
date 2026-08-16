@@ -3,7 +3,7 @@
 import dsce_defs_pkg::*;
 
 module tb_dsc_vlc_replay;
-    localparam int kGROUPS = 96;
+    localparam int kGROUPS = 512;
 
     typedef struct packed {
         logic [32:0] pad;
@@ -128,6 +128,10 @@ module tb_dsc_vlc_replay;
     always @(posedge dsc_clk) begin : Scoreboard
         for (int unit = 0; unit < 3; unit++) begin
             if (rtl_valid[unit]) begin
+                if (unit == 0 && rtl_count[unit] >= 62 && rtl_count[unit] < 76)
+                    $display("RTL_SCHED fragment=%0d size=%0d data=%04x expected=%06x bit_count=%0d",
+                             rtl_count[unit], rtl_size[unit], rtl_data[unit],
+                             expected_fragment(unit, rtl_count[unit]), rtl_bit_count[unit]);
                 for (int bit_index = int'(rtl_size[unit]) - 1; bit_index >= 0; bit_index--) begin
                     bit expected_bit;
                     case (unit)
@@ -219,13 +223,15 @@ module tb_dsc_vlc_replay;
         dsc_start_of_slice = 1'b0;
 
         for (int group_index = 0; group_index < kGROUPS; group_index++) begin
+            if (group_index != 0)
+                repeat (int'(trace[group_index].pad) - 1) @(negedge dsc_clk);
             current = trace[group_index];
             dsc_predict_valid_in = 1'b1;
             @(negedge dsc_clk);
             dsc_predict_valid_in = 1'b0;
-            repeat (3) @(negedge dsc_clk);
         end
-        repeat (32) @(negedge dsc_clk);
+        // luma 每组可能产生多于四个 fragment，留足时间排空内部调度器。
+        repeat (512) @(negedge dsc_clk);
         $display("VLC_REPLAY rtl_fragments=%0d/%0d/%0d rtl_mismatches=%0d/%0d/%0d",
                  rtl_count[0], rtl_count[1], rtl_count[2],
                  rtl_mismatches[0], rtl_mismatches[1], rtl_mismatches[2]);

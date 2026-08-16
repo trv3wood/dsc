@@ -127,6 +127,33 @@ C model 的 `bpCount>=3` 与 recent-edge 门控。该模块不是可通过拉高
 BP 实现。下一步必须以整个 `dsce_bpvector` 为黑盒移植 BP search/predict function model，
 替换进顶层验证 group 37 和端到端，再据此重构真实 RTL。
 
+### Flatness 节拍、MPP 与后续边界
+
+固定周期 replay 曾掩盖 `dsce_flat_flags` 在 valid 延迟三拍后仍读取实时 group/check-diff
+的问题。加入连续 valid 后可稳定复现，现已把 group、check-diff 与 valid 同步流水，并禁止
+行末候选泄漏到下一行。独立 replay 在 `VALID_PERIOD=1` 下通过全部 3456 groups。
+
+flatness 行尾 flush 会突发输出，而 prediction、重建反馈及 MMAP 实际要求每四拍一个 group。
+`dsce_slice` 现用深度 16 FIFO 缓存完整 flatness 事务，并以四拍间隔发送；无 overflow，首行
+全部 32 groups 的 rate 状态与 C model 对齐，原 group 25 差异消失。这属于恢复已有下游
+事务契约，不注入 golden 数据。
+
+`make rtl-e2e-bp-model` 用完整 BP DPI 模型替换 `dsce_bpvector` 后，首个预测边界差异由
+group 37 推进到 group 39。追踪发现 group 37 的 Co 选择 MPP 时，真实 `dsce_mpp` 延迟后
+读取了变化后的实时 right/group 输入，使 predictor 从应有的 258 变为 262。新增
+`make rtl-e2e-bp-mpp-model` 完整替换三个 MPP 实例，首 payload 差异由 byte 305 推进到
+byte 2255。真实 MPP 改为在 valid 当拍锁存计算结果并随 valid 流水后，获得相同推进效果。
+
+之后 group 385 暴露 line-last bit-save 状态差异：C model 的 DSC 1.2 行末强制 flat QP
+发生在 RateControl 之后，不应清除当前行 bit-save；RTL 却把行末强制
+`group_flatness_type` 当作普通 flat group。排除 `i_last_pd` 后，QP 序列恢复为 `3/5/7`，
+首 VLC 输入差异推进到 group 504 的 ICH 误选。
+
+在该可信上游上，完整 VLC 替换把首 payload 差异从 byte 2316 推进到 byte 2849。
+512-group replay 表明 RTL 会发送 `valid=1,size=0`，function model 不会。四拍事务适配
+已消除旧实验中的 overflow；真实 VLC 禁止零长度 valid 后也推进到 byte 2849，确认该
+边界语义修复。当前下一目标是完整替换 `dsce_ich`，验证并递归定位 group 504 误选。
+
 ## 仿真假设
 
 原始 RTL 包不含 `gprim_sync_stage`、`gprim_sync2_stage` 和 `gram_bist_1r1w`。`support/` 提供仅用于仿真的模型：同步器保留一拍/两拍延迟，RAM 使用同步读写，BIST 不建模。这些模型不能替代工艺库 CDC、冲突语义或 BIST 签核。

@@ -79,6 +79,7 @@ int PredictSize(dsc_cfg_t *dsc_cfg, int *req_size);
 // debug dumping
 
 FILE *g_fp_dbg = 0;
+static unsigned int g_ich_qerr_hit_mask[MAX_UNITS_PER_GROUP];
 
 // 设置 DSC_GROUP_TRACE 时，记录每组进入 VLC 前的量化残差和码控状态。
 static void TraceGroupInput(dsc_state_t *dsc_state)
@@ -99,16 +100,28 @@ static void TraceGroupInput(dsc_state_t *dsc_state)
 		return;
 
 	fprintf(trace_file,
-		"line=%d group=%d qp=%d ich=%d first_flat=%d flat_type=%d orig_flat=%d next_first_flat=%d",
+		"line=%d group=%d qp=%d ich=%d ichidx=%d,%d,%d qhit=%d%d%d qmask=%08x,%08x,%08x bp=%d mpp=%d%d%d first_flat=%d flat_type=%d orig_flat=%d next_first_flat=%d",
 		dsc_state->vPos, dsc_state->groupCountLine, dsc_state->primaryQp,
-		dsc_state->ichSelected, dsc_state->firstFlat, dsc_state->flatnessType,
+		dsc_state->ichSelected, dsc_state->ichLookup[0],
+		dsc_state->ichLookup[1], dsc_state->ichLookup[2],
+		dsc_state->origWithinQerr[0], dsc_state->origWithinQerr[1],
+		dsc_state->origWithinQerr[2],
+		g_ich_qerr_hit_mask[0], g_ich_qerr_hit_mask[1],
+		g_ich_qerr_hit_mask[2],
+		dsc_state->prevLinePred[dsc_state->groupCountLine],
+		dsc_state->midpointSelected[0], dsc_state->midpointSelected[1],
+		dsc_state->midpointSelected[2],
+		dsc_state->firstFlat, dsc_state->flatnessType,
 		dsc_state->origIsFlat, dsc_state->prevFirstFlat);
 	for (unit=0; unit<dsc_state->unitsPerGroup; ++unit)
-		fprintf(trace_file, " u%d=%d,%d,%d pred%d=%d", unit,
+		fprintf(trace_file,
+			" u%d=%d,%d,%d pred%d=%d err%d=%d miderr%d=%d icherr%d=%d", unit,
 			dsc_state->midpointSelected[unit] ? dsc_state->quantizedResidualMid[unit][0] : dsc_state->quantizedResidual[unit][0],
 			dsc_state->midpointSelected[unit] ? dsc_state->quantizedResidualMid[unit][1] : dsc_state->quantizedResidual[unit][1],
 			dsc_state->midpointSelected[unit] ? dsc_state->quantizedResidualMid[unit][2] : dsc_state->quantizedResidual[unit][2],
-			unit, dsc_state->predictedSize[unit]);
+			unit, dsc_state->predictedSize[unit], unit,
+			dsc_state->maxError[unit], unit, dsc_state->maxMidError[unit],
+			unit, dsc_state->maxIchError[unit]);
 	fputc('\n', trace_file);
 	fflush(trace_file);
 }
@@ -611,6 +624,7 @@ int IsOrigWithinQerr(dsc_cfg_t* dsc_cfg, dsc_state_t *dsc_state, int hPos, int v
 
 	// *MODEL NOTE* MN_ENC_ICH_PIXEL_CHECK_QERR
 	dsc_state->origWithinQerr[sampModCnt] = 0;  // Assume for now that pixel is not within QErr
+	g_ich_qerr_hit_mask[sampModCnt] = 0;
 
 	if (ICH_BITS==0)		// ICH disabled
 		return(0);
@@ -647,7 +661,10 @@ int IsOrigWithinQerr(dsc_cfg_t* dsc_cfg, dsc_state_t *dsc_state, int hPos, int v
 				hit = 0;
 		}
 		if (hit)
+		{
+			g_ich_qerr_hit_mask[sampModCnt] = 1u << j;
 			break;  // Found one
+		}
 	}
 	if (!hit)
 		return(0);  // Can't use, one pixel was a total miss

@@ -103,6 +103,18 @@ module dsce_slice
     logic                       i_last_fd;
     tDSC_PIXEL                  i_group_fd [2:0];
     tDSC_FLAT_FLAGS             i_vlc_flat_flags_fd;
+    logic                       i_valid_fd_raw;
+    logic                       i_last_fd_raw;
+    tDSC_PIXEL                  i_group_fd_raw [2:0];
+    tDSC_FLAT_FLAGS             i_vlc_flat_flags_fd_raw;
+    logic                       i_fd_pop;
+    logic [3:0]                 i_fd_write_ptr;
+    logic [3:0]                 i_fd_read_ptr;
+    logic [4:0]                 i_fd_count;
+    logic [1:0]                 i_fd_cooldown;
+    logic                       i_fd_last_fifo [15:0];
+    tDSC_PIXEL                  i_fd_group_fifo [15:0][2:0];
+    tDSC_FLAT_FLAGS             i_fd_flags_fifo [15:0];
     tDSC_FLAT_FLAGS             i_vlc_flat_flags_fifo [7:0];
     tDSC_FLAT_FLAGS             i_vlc_flat_flags_aligned;
     logic [2:0]                 i_flat_flags_write_ptr;
@@ -146,6 +158,57 @@ module dsce_slice
 
     // 用 valid 事务对齐 flatness 与 prediction，不依赖 group 间的固定空拍数。
     assign i_vlc_flat_flags_aligned = i_vlc_flat_flags_fifo[i_flat_flags_read_ptr];
+
+    // flatness 的行尾 lookahead 会突发吐出尾部 group；预测/重建反馈环每个
+    // group 需要四周期。这里保持事务顺序并恢复该边界节拍。
+    assign i_fd_pop = (i_fd_count != 0) && (i_fd_cooldown == 0);
+
+    always_ff @(posedge dsc_clk or negedge dsc_reset_n) begin : FlatnessOutputScheduler
+        if (!dsc_reset_n) begin
+            i_valid_fd <= 1'b0;
+            i_last_fd <= 1'b0;
+            i_group_fd <= '{default: kDSC_PIXEL_INIT};
+            i_vlc_flat_flags_fd <= kDSC_FLAT_FLAGS_INIT;
+            i_fd_write_ptr <= 4'd0;
+            i_fd_read_ptr <= 4'd0;
+            i_fd_count <= 5'd0;
+            i_fd_cooldown <= 2'd0;
+            i_fd_last_fifo <= '{default: 1'b0};
+            i_fd_group_fifo <= '{default: '{default: kDSC_PIXEL_INIT}};
+            i_fd_flags_fifo <= '{default: kDSC_FLAT_FLAGS_INIT};
+        end else begin
+            i_valid_fd <= 1'b0;
+            i_last_fd <= 1'b0;
+
+            if (i_fd_cooldown != 0)
+                i_fd_cooldown <= i_fd_cooldown - 1'b1;
+
+            if (i_valid_fd_raw) begin
+                i_fd_last_fifo[i_fd_write_ptr] <= i_last_fd_raw;
+                i_fd_group_fifo[i_fd_write_ptr] <= i_group_fd_raw;
+                i_fd_flags_fifo[i_fd_write_ptr] <= i_vlc_flat_flags_fd_raw;
+                i_fd_write_ptr <= i_fd_write_ptr + 1'b1;
+            end
+
+            if (i_fd_pop) begin
+                i_valid_fd <= 1'b1;
+                i_last_fd <= i_fd_last_fifo[i_fd_read_ptr];
+                i_group_fd <= i_fd_group_fifo[i_fd_read_ptr];
+                i_vlc_flat_flags_fd <= i_fd_flags_fifo[i_fd_read_ptr];
+                i_fd_read_ptr <= i_fd_read_ptr + 1'b1;
+                i_fd_cooldown <= 2'd3;
+            end
+
+            case ({i_valid_fd_raw, i_fd_pop})
+                2'b10: i_fd_count <= i_fd_count + 1'b1;
+                2'b01: i_fd_count <= i_fd_count - 1'b1;
+                default: i_fd_count <= i_fd_count;
+            endcase
+
+            assert (!i_valid_fd_raw || i_fd_count < 5'd16)
+                else $error("Flatness output scheduler overflow");
+        end
+    end
 
     always_ff @(posedge dsc_clk or negedge dsc_reset_n) begin : FlatnessTransactionFifo
         if (!dsc_reset_n) begin
@@ -260,10 +323,10 @@ module dsce_slice
         .dsc_source_last_in         (i_last_slb),
         .dsc_source_group_in        (i_group_slb),
         // output data path
-        .dsc_group_valid_out        (i_valid_fd),
-        .dsc_group_last_out         (i_last_fd),
-        .dsc_group_out              (i_group_fd),
-        .dsc_vlc_flat_flags_out     (i_vlc_flat_flags_fd),
+        .dsc_group_valid_out        (i_valid_fd_raw),
+        .dsc_group_last_out         (i_last_fd_raw),
+        .dsc_group_out              (i_group_fd_raw),
+        .dsc_vlc_flat_flags_out     (i_vlc_flat_flags_fd_raw),
         .dsc_ich_next_is_very_flat  (i_ich_next_is_very_flat)
     );
 
@@ -288,6 +351,7 @@ module dsce_slice
         .dsc_group_last_in          (i_last_fd),
         .dsc_group_in               (i_group_fd),
         .dsc_right_in               (i_right_pixel_dec),
+        .dsc_recon_group_in         (i_recon_dec),
         // entropy feedback and rate control
         .dsc_line_prev_in           (i_prev_line_mmap),
         .dsc_qlevel_y               (i_qlevel_y),
@@ -308,7 +372,11 @@ module dsce_slice
     // ---------------------------------------------
     //  indexed color history table
     // ---------------------------------------------
-    dsce_ich  dsce_ich_inst
+`ifdef DSC_ICH_MODEL_SUBSTITUTE
+    dsce_ich_function_model dsce_ich_inst
+`else
+    dsce_ich dsce_ich_inst
+`endif
     (
         // clock and control interface
         .dsc_clk                    (dsc_clk),
@@ -328,7 +396,9 @@ module dsce_slice
         .dsc_qlevel_y_in            (i_qlevel_y),
         .dsc_qlevel_c_in            (i_qlevel_c),
         .dsc_force_mpp_in           (i_force_mpp),
-        .dsc_ich_next_is_very_flat  (i_ich_next_is_very_flat),
+        // ICH 的严格代价判据必须使用与预测/VLC 同一事务的 flatness 标志。
+        // 独立 ICH flatness 流水在气泡周期会与 i_valid_pd 脱节。
+        .dsc_ich_next_is_very_flat  (i_vlc_flat_flags_aligned.group_flatness_type == kDSC_VERY_FLAT),
         .dsc_vlc_size_in            (i_vlc_size_dec),
         // predict pixel input
         .dsc_predict_valid_in       (i_valid_pd),
@@ -463,7 +533,9 @@ module dsce_slice
         .dsc_use_mpp                (i_mpp_dec),
         .dsc_ich_selected           (i_ich_selected_dec),
         .dsc_vlc_size               (i_vlc_size_dec),
-        .dsc_flatness_flag          (i_vlc_flat_flags_aligned.group_flatness_type != 2'd0),
+        // DSC 1.2 的行末强制 QP 调整发生在 RateControl 之后，不应清除
+        // 当前行已建立的 bit-save 状态。
+        .dsc_flatness_flag          ((i_vlc_flat_flags_aligned.group_flatness_type != 2'd0) && !i_last_pd),
         // primary quant level
         .dsc_qp_valid_out           (i_valid_rc),
         .dsc_qp_valid_next          (i_valid_rc_next),

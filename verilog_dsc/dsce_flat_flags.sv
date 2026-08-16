@@ -75,10 +75,13 @@ module dsce_flat_flags
     tDSC_PIXEL              i_sg_2_check_diff[2:1];
     tDSC_PIXEL              i_super_group_3 [2:0];
     tDSC_PIXEL              i_sg_3_check_diff[2:1];
+    logic   [3:0]           i_super_group_last;
 
     // ----- pipeline signals ----- //
     logic   [3:1]           i_stage_valid;
     logic   [3:1]           i_stage_last;
+    tDSC_PIXEL              i_stage_group [3:1][2:0];
+    tDSC_PIXEL              i_stage_check_diff [3:1][2:1];
     logic   [2:0]           i_flush_count;
     logic                   i_flush_group;
 
@@ -167,10 +170,14 @@ module dsce_flat_flags
         i_flat_threshold_c = dsce_max_2(i_very_flat_thresh, dsce_quant_divisor(i_flat_qlevel_c));
 
         // group 3 输出时，队列中的 1/2/3 和当前输入正好覆盖下一个 supergroup。
-        i_candidate_type[0] = dsce_flatness_type(i_sg_1_check_diff[1], i_sg_1_check_diff[2]);
-        i_candidate_type[1] = dsce_flatness_type(i_sg_2_check_diff[1], i_sg_2_check_diff[2]);
-        i_candidate_type[2] = dsce_flatness_type(i_sg_3_check_diff[1], i_sg_3_check_diff[2]);
-        i_candidate_type[3] = dsce_flatness_type(dsc_check_diff_in[1], dsc_check_diff_in[2]);
+        i_candidate_type[0] = i_super_group_last[1] ? 2'd0 :
+                              dsce_flatness_type(i_sg_1_check_diff[1], i_sg_1_check_diff[2]);
+        i_candidate_type[1] = i_super_group_last[2] ? 2'd0 :
+                              dsce_flatness_type(i_sg_2_check_diff[1], i_sg_2_check_diff[2]);
+        i_candidate_type[2] = i_super_group_last[3] ? 2'd0 :
+                              dsce_flatness_type(i_sg_3_check_diff[1], i_sg_3_check_diff[2]);
+        i_candidate_type[3] = i_stage_last[3] ? 2'd0 :
+                              dsce_flatness_type(i_stage_check_diff[3][1], i_stage_check_diff[3][2]);
 
         // quantization divisors
         i_quant_divisor_y = dsce_quant_divisor(i_ich_qlevel_y);
@@ -210,6 +217,8 @@ module dsce_flat_flags
 
             i_stage_valid <= 3'b000;
             i_stage_last <= 3'b000;
+            i_stage_group <= '{default: '{default: kDSC_PIXEL_INIT}};
+            i_stage_check_diff <= '{default: '{default: kDSC_PIXEL_INIT}};
             i_flush_count <= 3'd0;
             i_flush_group <= 1'b0;
             i_output_supergroup_index <= 2'd0;
@@ -230,18 +239,30 @@ module dsce_flat_flags
             if (dsc_group_valid_in == 1'b1 || i_flush_group == 1'b1) begin
                 i_stage_valid[1] <= 1'b1;
                 i_stage_last[1] <= dsc_group_valid_in && dsc_group_last_in;
+                // valid 与数据必须走同一条流水；不能在 stage 3 采样当拍输入。
+                if (dsc_group_valid_in) begin
+                    i_stage_group[1] <= dsc_group_in;
+                    i_stage_check_diff[1] <= dsc_check_diff_in;
+                end else begin
+                    i_stage_group[1] <= '{default: kDSC_PIXEL_INIT};
+                    i_stage_check_diff[1] <= '{default: kDSC_PIXEL_INIT};
+                end
             end // if
 
             // ----- stage 1 ----- //
             if (i_stage_valid[1] == 1'b1) begin
                 i_stage_valid[2] <= 1'b1;
                 i_stage_last[2] <= i_stage_last[1];
+                i_stage_group[2] <= i_stage_group[1];
+                i_stage_check_diff[2] <= i_stage_check_diff[1];
             end // if
 
             // ----- stage 2 ----- //
             if (i_stage_valid[2] == 1'b1) begin
                 i_stage_valid[3] <= 1'b1;
                 i_stage_last[3] <= i_stage_last[2];
+                i_stage_group[3] <= i_stage_group[2];
+                i_stage_check_diff[3] <= i_stage_check_diff[2];
             end // if
 
             // ----- stage 3 ----- //
@@ -266,7 +287,13 @@ module dsce_flat_flags
                         dsc_vlc_flat_flags_out.flatness_type <= i_current_flatness_type;
                     end
 
-                    if (i_output_supergroup_index == 2'd3) begin
+                    // 行末的强制 very-flat 只作用于当前 group，不能产生下一行的
+                    // next/send flatness 状态。
+                    if (i_flush_count == 3'd2) begin
+                        i_current_first_flat_valid <= 1'b0;
+                        i_current_first_flat <= 2'd0;
+                        i_current_flatness_type <= 1'b0;
+                    end else if (i_output_supergroup_index == 2'd3) begin
                         i_next_first_flat_valid = 1'b0;
                         i_next_first_flat = 2'd0;
                         i_next_flatness_type = 1'b0;
@@ -364,6 +391,7 @@ module dsce_flat_flags
             i_sg_2_check_diff <= '{default: kDSC_PIXEL_INIT};
             i_super_group_3 <= '{default: kDSC_PIXEL_INIT};
             i_sg_3_check_diff <= '{default: kDSC_PIXEL_INIT};
+            i_super_group_last <= 4'b0000;
 
             i_input_supergroup_index <= 2'd0;
             i_buffer_valid <= 4'b0000;
@@ -382,12 +410,13 @@ module dsce_flat_flags
                 i_super_group_0 <= i_super_group_1;
                 i_super_group_1 <= i_super_group_2;
                 i_super_group_2 <= i_super_group_3;
-                i_super_group_3 <= dsc_group_in;
+                i_super_group_3 <= i_stage_group[3];
 
                 i_sg_0_check_diff <= i_sg_1_check_diff;
                 i_sg_1_check_diff <= i_sg_2_check_diff;
                 i_sg_2_check_diff <= i_sg_3_check_diff;
-                i_sg_3_check_diff <= dsc_check_diff_in;
+                i_sg_3_check_diff <= i_stage_check_diff[3];
+                i_super_group_last <= {i_stage_last[3], i_super_group_last[3:1]};
             end // if
 
             // ----- valid bits for data flow control ----- //

@@ -214,6 +214,7 @@ def write_group_boundary_expected(generated: Path, group_trace: Path) -> None:
     predicted_words: list[int] = []
     qp_words: list[int] = []
     ich_words: list[int] = []
+    ich_index_words: list[int] = []
     for line in group_trace.read_text(encoding="ascii").splitlines():
         fields = dict(field.split("=", 1) for field in line.split())
         residual_word = 0
@@ -229,6 +230,8 @@ def write_group_boundary_expected(generated: Path, group_trace: Path) -> None:
         )
         qp_words.append(int(fields["qp"]))
         ich_words.append(int(fields["ich"]))
+        indices = [int(value) for value in fields["ichidx"].split(",")]
+        ich_index_words.append((indices[0] << 10) | (indices[1] << 5) | indices[2])
 
     (generated / "group_residual_expected.hex").write_text(
         "".join(f"{word:039x}\n" for word in residual_words), encoding="ascii")
@@ -238,6 +241,8 @@ def write_group_boundary_expected(generated: Path, group_trace: Path) -> None:
         "".join(f"{word:02x}\n" for word in qp_words), encoding="ascii")
     (generated / "group_ich_expected.hex").write_text(
         "".join(f"{word:01x}\n" for word in ich_words), encoding="ascii")
+    (generated / "group_ich_index_expected.hex").write_text(
+        "".join(f"{word:04x}\n" for word in ich_index_words), encoding="ascii")
 
 
 def write_hex(path: Path, data: bytes) -> None:

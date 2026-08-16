@@ -164,8 +164,20 @@ module dsce_stream_fifo
             end // if
 
             // ----- error checking assertion ----- //
-            assert (i_coded_size_valid == 1'b0 || i_syntax_full == 1'b0) else $error("Syntax FIFO overflow");
-            assert (dsc_muxword_valid_in == 1'b0 || i_muxword_full == 1'b0) else $error("Muxword FIFO overflow");
+            if (i_coded_size_valid == 1'b1 && i_syntax_full == 1'b1 &&
+                !(dsc_coded_size_valid_out == 1'b1 && dsc_coded_size_ready_out == 1'b1)) begin
+                $display("SYNTAX_FIFO_OVERFLOW write=%0d read=%0d next=%0d out_valid=%0b out_ready=%0b in_valid=%0b",
+                         i_syntax_write_ptr, i_syntax_read_ptr,
+                         i_syntax_write_ptr_plus_1, dsc_coded_size_valid_out,
+                         dsc_coded_size_ready_out, i_coded_size_valid);
+            end
+            // FIFO 满时若本拍消费者取走旧条目，写端可安全复用该槽位。
+            assert (i_coded_size_valid == 1'b0 || i_syntax_full == 1'b0 ||
+                    (dsc_coded_size_valid_out == 1'b1 && dsc_coded_size_ready_out == 1'b1))
+                else $error("Syntax FIFO overflow");
+            assert (dsc_muxword_valid_in == 1'b0 || i_muxword_full == 1'b0 ||
+                    i_muxword_read == 1'b1)
+                else $error("Muxword FIFO overflow");
         end // if
     end : FlowControlBuffers
 
@@ -188,12 +200,13 @@ module dsce_stream_fifo
 
             // ----- valid/ready out, coded size ----- //
             if (dsc_coded_size_valid_out == 1'b0) begin
-                if (i_syntax_write_ptr != i_syntax_read_ptr) begin
+                if (i_syntax_write_ptr != i_syntax_read_ptr || i_syntax_full == 1'b1) begin
                     dsc_coded_size_valid_out <= 1'b1;
                     dsc_coded_size_out <= i_syntax_buffer[i_syntax_read_ptr];
                 end // if
             end else begin
-                if (dsc_coded_size_ready_out == 1'b1 && i_syntax_read_ptr == i_syntax_write_ptr) begin
+                if (dsc_coded_size_ready_out == 1'b1 && i_syntax_read_ptr == i_syntax_write_ptr &&
+                    i_syntax_full == 1'b0) begin
                     dsc_coded_size_valid_out <= 1'b0;
                 end // if
                 dsc_coded_size_out <= i_syntax_buffer[i_syntax_read_ptr];
@@ -207,13 +220,14 @@ module dsce_stream_fifo
 
             // ----- valid/ready out, muxword size ----- //
             if (dsc_muxword_valid_out == 1'b0) begin
-                if (i_muxword_write_ptr != i_muxword_read_ptr) begin
+                if (i_muxword_write_ptr != i_muxword_read_ptr || i_muxword_full == 1'b1) begin
                     dsc_muxword_valid_out <= 1'b1;
                     dsc_muxword_out <= i_muxword_buffer[i_muxword_read_ptr];
                 end // if
             end else begin
                 if (dsc_muxword_ready_out == 1'b1) begin
-                    if (i_muxword_read_ptr == i_muxword_write_ptr)  dsc_muxword_valid_out <= 1'b0;
+                    if (i_muxword_read_ptr == i_muxword_write_ptr && i_muxword_full == 1'b0)
+                        dsc_muxword_valid_out <= 1'b0;
                     dsc_muxword_out <= i_muxword_buffer[i_muxword_read_ptr];
                 end // if
             end // if
@@ -228,4 +242,3 @@ module dsce_stream_fifo
     end : OutputManager
 
 endmodule : dsce_stream_fifo
-

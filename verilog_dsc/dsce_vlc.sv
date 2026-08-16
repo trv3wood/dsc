@@ -106,6 +106,8 @@ module dsce_vlc
     logic [4:0]                     i_prefix_size;
     logic [15:0]                    i_prefix_data;
     logic [15:0]                    i_next_flatness_bit;
+    logic [4:0]                     i_s0_size;
+    logic [15:0]                    i_s0_data;
 
     // output management
     logic [3:1]                     i_pipe_valid;
@@ -187,6 +189,31 @@ module dsce_vlc
         i_next_flatness_check = (pCOLOR_SELECT == 0 && (dsc_primary_qp_in >= i_flatness_min_qp && dsc_primary_qp_in <= i_flatness_max_qp)) ? 1'b1 : 1'b0;
         i_next_flatness_bit = {15'd0, dsc_flatness_in.next_flatness_flag} << i_prefix_size;
         i_flatness_size = (i_group_index == 2'd3) ? {4'b0000, i_next_flatness_check} : 5'd0;
+
+        // PipeS0 的完整语法；ICH 时可与 index 合并，保证无 ready 接口的突发吞吐。
+        i_s0_size = i_prefix_size;
+        i_s0_data = i_prefix_data;
+        case (i_group_index)
+            2'd3: begin
+                i_s0_size = i_prefix_size + {4'd0, i_next_flatness_check};
+                i_s0_data = i_prefix_data | i_next_flatness_bit;
+            end
+            2'd0: begin
+                if (pCOLOR_SELECT == 0 && dsc_flatness_in.send_flatness) begin
+                    if (dsc_primary_qp_in >= dsce_get_somewhat_flat_threshold(cfg_pps.bits_per_component)) begin
+                        i_s0_size = i_prefix_size + 5'd3;
+                        i_s0_data = ({13'd0, dsc_flatness_in.flatness_type,
+                                     dsc_flatness_in.first_flat} << i_prefix_size) |
+                                    i_prefix_data;
+                    end else begin
+                        i_s0_size = i_prefix_size + 5'd2;
+                        i_s0_data = ({14'd0, dsc_flatness_in.first_flat} << i_prefix_size) |
+                                    i_prefix_data;
+                    end
+                end
+            end
+            default: begin end
+        endcase
     end : SignalMap
 
 
@@ -324,41 +351,21 @@ module dsce_vlc
             dsc_vlc_valid_out <= 1'b0;
 
             // flatness is inserted in state 8 to preserve bit stream order (prior to luma)
-            case (i_pipeline_state)
+            casez (i_pipeline_state)
                 // flatness + prefix
-                4'b0001:  begin  :  PipeS0
+                4'b???1:  begin  :  PipeS0
                     dsc_vlc_valid_out <= 1'b1;
-
-                    case (i_group_index)
-                        2'd3:  begin
-                            dsc_vlc_size_out <= i_prefix_size + {4'd0, i_next_flatness_check};
-                            dsc_vlc_data_out <= i_prefix_data | i_next_flatness_bit;
-                            i_next_flatness_flag <= i_next_flatness_check;
-                        end // next_flatness_flag
-
-                        2'd0:  begin
-                            if (pCOLOR_SELECT == 0 && dsc_flatness_in.send_flatness) begin
-                                if (dsc_primary_qp_in >= dsce_get_somewhat_flat_threshold(cfg_pps.bits_per_component)) begin
-                                    dsc_vlc_size_out <= i_prefix_size + 5'd3;
-                                    dsc_vlc_data_out <= ({13'd0, dsc_flatness_in.flatness_type,
-                                                         dsc_flatness_in.first_flat} << i_prefix_size) |
-                                                        i_prefix_data;
-                                end else begin
-                                    dsc_vlc_size_out <= i_prefix_size + 5'd2;
-                                    dsc_vlc_data_out <= ({14'd0, dsc_flatness_in.first_flat} << i_prefix_size) |
-                                                        i_prefix_data;
-                                end
-                            end else begin
-                                dsc_vlc_size_out <= i_prefix_size;
-                                dsc_vlc_data_out <= i_prefix_data;
-                            end
-                        end // flatness position and type
-
-                        default:  begin
-                            dsc_vlc_size_out <= i_prefix_size;
-                            dsc_vlc_data_out <= i_prefix_data;
-                        end // no flatness indication
-                    endcase
+                    i_next_flatness_flag <= i_next_flatness_check;
+                    if (dsc_ich_selected_in) begin
+                        dsc_vlc_size_out <= i_s0_size + 5'd5;
+                        dsc_vlc_data_out <= (i_s0_data << 5) | {11'd0, dsc_ich_index_in};
+                        dsc_vlc_last_out <= dsc_predict_last_in;
+                    end else begin
+                        dsc_vlc_size_out <= i_s0_size;
+                        dsc_vlc_data_out <= i_s0_data;
+                        if (i_s0_size == 5'd0)
+                            dsc_vlc_valid_out <= 1'b0;
+                    end
                 end : PipeS0
 
                 // residual 0 / ICH index
@@ -366,9 +373,7 @@ module dsce_vlc
                     dsc_vlc_valid_out <= 1'b1;
 
                     if (i_ich_selected_in == 1'b1) begin
-                        dsc_vlc_size_out <= 5'd5;
-                        dsc_vlc_data_out <= {11'd0, i_ich_index_in};
-                        dsc_vlc_last_out <= i_pipe_last[1];
+                        dsc_vlc_valid_out <= 1'b0;
                     end else begin
                         dsc_vlc_size_out <= i_residual_size_in;
                         dsc_vlc_data_out <= i_residual_in[0][15:0];

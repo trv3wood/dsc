@@ -51,6 +51,7 @@ module dsce_ich_decision
     input  logic                    dsc_force_mpp_in,               // force MPP mode
 
     // predict and ICH inputs
+    input  logic                    dsc_predict_valid_in,           // valid predict data in
     input  tDSC_PIXEL               dsc_predict_group_in [2:0],     // predicted group input
     input  logic [4:0]              dsc_residual_size_in [2:0],     // max size of the residuals
     input  logic [2:0]              dsc_ich_hit,                    // ICH hit for each entry
@@ -102,13 +103,17 @@ module dsce_ich_decision
     // cost values
     logic   [8:0]                   i_predict_mode_cost;
     logic   [8:0]                   i_ich_mode_cost;
-    logic                           i_ich_candidate_hit;
 
     // registered values
-    logic   [3:1]                   i_pipeline_enable;
     tDSC_QLEVEL                     i_prev_qlevel [1:0];
     logic                           i_prev_ich;
 
+    // ICH 选择跨模块连接候选命中位；连续赋值确保端口更新后在同一时隙重新求值。
+    assign dsc_ich_select_out = dsc_predict_valid_in && (&dsc_ich_hit) &&
+                                ((cfg_dsc_version_minor == 4'd1 || dsc_ich_next_is_very_flat) ?
+                                 ((i_log_err_ich_mode <= i_log_err_predict_mode) &&
+                                  (i_ich_mode_cost < i_predict_mode_cost)) :
+                                 (i_ich_mode_cost < i_predict_mode_cost));
 
     // ------------------------------------------------------------------------------------------------------------
     //                                            multiply by 3 function
@@ -257,7 +262,10 @@ module dsce_ich_decision
     always_comb begin : ICHSelection
         i_predict_mode_cost = {2'b00, i_bits_p_mode} + {i_log_err_predict_mode, 2'b00};
         i_ich_mode_cost = {3'b000, i_bits_ich_mode} + {1'b0, i_log_err_ich_mode, 2'b00};
-        i_ich_candidate_hit = &dsc_ich_hit;
+
+        dsc_ich_valid_out = dsc_predict_valid_in;
+        dsc_ich_index_out = dsc_ich_index_in;
+        dsc_ich_group_out = dsc_ich_pixel_in;
     end : ICHSelection
 
 
@@ -266,12 +274,6 @@ module dsce_ich_decision
     // -------------------------------------------------------
     always_ff@(posedge dsc_clk or negedge dsc_reset_n) begin : PipelineRegisters
         if (dsc_reset_n == 1'b0) begin
-            dsc_ich_select_out <= 1'b0;
-            dsc_ich_index_out <= '{default: kDSC_ICH_INDEX_INIT};
-            dsc_ich_group_out <= '{default: kDSC_PIXEL_INIT};
-            dsc_ich_valid_out <= 1'b0;
-
-            i_pipeline_enable <= 3'b000;
             i_prev_group_in <= '{default: kDSC_PIXEL_INIT};
             i_qlevel <= '{default: kDSC_QLEVEL_ZERO};
             i_prev_qlevel <= '{default: kDSC_QLEVEL_ZERO};
@@ -281,9 +283,6 @@ module dsce_ich_decision
 
         end else begin
 
-            // ----- pipeline flags ----- //
-            i_pipeline_enable <= {i_pipeline_enable[2:1], dsc_group_valid_in};
-            dsc_ich_valid_out <= 1'b0;
 
             // ----- S0 ----- //
             if (dsc_start_of_slice == 1'b1) begin
@@ -300,35 +299,6 @@ module dsce_ich_decision
                 i_prev_group_in <= dsc_group_in;
             end // if
 
-            // ----- S2 ----- //
-            if (dsc_start_of_slice == 1'b1) begin
-                dsc_ich_select_out <= 1'b0;
-                dsc_ich_index_out <= '{default: kDSC_ICH_INDEX_INIT};
-                dsc_ich_group_out <= '{default: kDSC_PIXEL_INIT};
-                dsc_ich_valid_out <= 1'b0;
-
-            end else begin
-                if (i_pipeline_enable[3] == 1'b1) begin
-                    dsc_ich_valid_out <= 1'b1;
-                    dsc_ich_index_out <= dsc_ich_index_in;
-                    dsc_ich_group_out <= dsc_ich_pixel_in;
-
-                    if (cfg_dsc_version_minor == 4'd1 || dsc_ich_next_is_very_flat == 1'b1) begin
-                        if (i_log_err_ich_mode <= i_log_err_predict_mode && i_ich_mode_cost < i_predict_mode_cost) begin
-                            dsc_ich_select_out <= i_ich_candidate_hit;
-                        end else begin
-                            dsc_ich_select_out <= 1'b0;
-                        end // if
-                    end else begin
-                        if (i_ich_mode_cost < i_predict_mode_cost) begin
-                            dsc_ich_select_out <= i_ich_candidate_hit;
-                        end else begin
-                            dsc_ich_select_out <= 1'b0;
-                        end // if
-                    end // if
-                end // if
-            end // if
-
             // ----- S0 results ----- //
             if (dsc_ich_valid_out == 1'b1 && (dsc_ich_select_out == 1'b0 || dsc_force_mpp_in == 1'b1)) begin
                 i_predicted_size <= dsc_vlc_size_in;
@@ -338,4 +308,3 @@ module dsce_ich_decision
     end : PipelineRegisters
 
 endmodule : dsce_ich_decision
-

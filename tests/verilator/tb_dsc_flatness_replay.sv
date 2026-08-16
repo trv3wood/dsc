@@ -68,6 +68,10 @@ module tb_dsc_flatness_replay;
             check_index++;
         end
         if (dsc_group_valid_out) begin
+            if (output_index < 5 || (output_index < 40 &&
+                (output_index >= 28 || dsc_group_last_out)))
+                $display("FLAT_OUT group=%0d last=%0b flags=%02x", output_index,
+                         dsc_group_last_out, dsc_vlc_flat_flags_out);
             for (int lane = 0; lane < 3; lane++) begin
                 if (dsc_group_out[lane] !== pixel_words[output_index][lane * 48 +: 48]) begin
                     if (group_errors < 8)

@@ -77,6 +77,7 @@ module dsce_ich
     logic [31:0]                    i_ich_entry_valid;
     tDSC_PIXEL                      i_ich_entry [31:0];
     logic [2:0]                     i_ich_hit;
+    logic [2:0]                     i_ich_hit_current;
     tDSC_ICH_INDEX                  i_ich_index [2:0];
     tDSC_PIXEL                      i_ich_pixel [2:0];
     logic                           i_ich_select_decision;
@@ -84,6 +85,9 @@ module dsce_ich
     // ----- predict reconstruction ----- //
     tDSC_PIXEL                      i_predict_group_in [2:0];
     tDSC_PIXEL                      i_recon_group [2:0];
+
+    // ICH 选择是本拍组合决策，直接转发给 decision，避免跨 always_comb 的 delta 延迟。
+    assign dsc_ich_select_out = i_ich_select_decision & ~dsc_force_mpp_in;
 
 
     // ------------------------------------------------------------------------------------------------------------
@@ -95,15 +99,15 @@ module dsce_ich
             i_predict_group_in[rx].co = dsce_recon(dsc_predict_in[rx].co, dsc_quant_residual_in[rx].res_co, dsc_qlevel_c_res);
             i_predict_group_in[rx].cg = dsce_recon(dsc_predict_in[rx].cg, dsc_quant_residual_in[rx].res_cg, dsc_qlevel_c_res);
         end : PredictReconLoop
+    end : PredictRecon
 
-        if (i_ich_select_decision == 1'b0 || dsc_force_mpp_in == 1'b1) begin
-            dsc_ich_select_out = 1'b0;
+    always_comb begin : ReconSelection
+        if (dsc_ich_select_out == 1'b0) begin
             i_recon_group = i_predict_group_in;
         end else begin
-            dsc_ich_select_out = 1'b1;
             i_recon_group = dsc_ich_group_out;
         end // if
-    end : PredictRecon
+    end : ReconSelection
 
 
     // ------------------------------------------------------------------------------------------------------------
@@ -160,6 +164,7 @@ module dsce_ich
         .dsc_ich_entry_in               (i_ich_entry),
         // ICH candidate selection
         .dsc_ich_hit                    (i_ich_hit),
+        .dsc_ich_hit_current            (i_ich_hit_current),
         .dsc_ich_index_out              (i_ich_index),
         .dsc_ich_pixel_out              (i_ich_pixel)
     );
@@ -188,6 +193,7 @@ module dsce_ich
         .dsc_qlevel_c_in                (dsc_qlevel_c_in),
         .dsc_force_mpp_in               (dsc_force_mpp_in),
         // predict and ICH inputs
+        .dsc_predict_valid_in           (dsc_predict_valid_in),
         .dsc_predict_group_in           (i_predict_group_in),
         .dsc_residual_size_in           (dsc_residual_size_in),
         .dsc_ich_hit                    (i_ich_hit),
@@ -201,4 +207,3 @@ module dsce_ich
     );
 
 endmodule : dsce_ich
-

@@ -43,6 +43,7 @@ module dsce_flat_check
             i_pad_pixel <= kDSC_PIXEL_INIT;
             dsc_group_valid_out <= 1'b0;
             dsc_group_last_out <= 1'b0;
+
             dsc_group_out <= '{default: kDSC_PIXEL_INIT};
             dsc_check_diff_out <= '{default: kDSC_PIXEL_INIT};
         end else begin

@@ -47,6 +47,7 @@ module dsce_predict
     input  logic                 dsc_group_last_in,            // last group in the slice
     input  tDSC_PIXEL            dsc_group_in [2:0],           // current source group
     input  tDSC_PIXEL            dsc_right_in,                 // right pixel from the previous group
+    input  tDSC_PIXEL            dsc_recon_group_in [2:0],     // 上一组重建像素反馈
 
     // entropy feedback and rate control
     input  tDSC_PIXEL            dsc_line_prev_in [5:0],       // pixels from the previous line
@@ -153,7 +154,11 @@ module dsce_predict
     // ------------------------------------------------------------------------------------------------------------
     //                                   prediction blocks
     // ------------------------------------------------------------------------------------------------------------
+`ifdef DSC_MPP_MODEL_SUBSTITUTE
+    dsce_mpp_function_model
+`else
     dsce_mpp
+`endif
     #(
         .pCOMPONENT_SELECT   (0)
     ) dsce_mpp_y_inst
@@ -178,7 +183,11 @@ module dsce_predict
     );
 
 
+`ifdef DSC_MPP_MODEL_SUBSTITUTE
+    dsce_mpp_function_model
+`else
     dsce_mpp
+`endif
     #(
         .pCOMPONENT_SELECT   (1)
     ) dsce_mpp_co_inst
@@ -203,7 +212,11 @@ module dsce_predict
     );
 
 
+`ifdef DSC_MPP_MODEL_SUBSTITUTE
+    dsce_mpp_function_model
+`else
     dsce_mpp
+`endif
     #(
         .pCOMPONENT_SELECT          (2)
     ) dsce_mpp_cg_inst
@@ -307,7 +320,11 @@ module dsce_predict
     //                                         block prediction calculation
     // ------------------------------------------------------------------------------------------------------------
     generate if (pINCLUDE_BLOCK_PREDICTION == 1) begin : gen_bp
+`ifdef DSC_BPVECTOR_MODEL_SUBSTITUTE
+        dsce_bpvector_function_model dsce_bpvector_inst
+`else
         dsce_bpvector  dsce_bpvector_inst
+`endif
         (
             // clock and control interface
             .dsc_clk             (dsc_clk),
@@ -320,6 +337,7 @@ module dsce_predict
             .dsc_last_in         (dsc_group_last_in),
             .dsc_group_in        (dsc_group_in),
             .dsc_prev_line_in    (dsc_line_prev_in),
+            .dsc_recon_group_in  (dsc_recon_group_in),
             .dsc_valid_out       (i_valid_bp),
             .dsc_last_out        (i_last_bp),
             .dsc_use_bp          (dsc_use_bp_out),
@@ -337,4 +355,3 @@ module dsce_predict
     end endgenerate
 
 endmodule : dsce_predict
-

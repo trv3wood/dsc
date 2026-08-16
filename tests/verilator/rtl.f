@@ -4,6 +4,9 @@ tests/verilator/support/gprim_sync.sv
 tests/verilator/support/gram_bist_1r1w.sv
 verilog_dsc/dsce_apb.sv
 verilog_dsc/dsce_bpvector.sv
+verilog_dsc/dsce_bpvector_function_model.sv
+verilog_dsc/dsce_mpp_function_model.sv
+verilog_dsc/dsce_ich_function_model.sv
 verilog_dsc/dsce_bypass.sv
 verilog_dsc/dsce_command.sv
 verilog_dsc/dsce_convert.sv
