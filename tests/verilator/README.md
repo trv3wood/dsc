@@ -109,6 +109,24 @@ VLC 替换不会在该点 overflow，但仍在 byte 172 起失配并最终超时
 定位在 VLC 的无 ready 四拍调度/formatter 契约及 function model 尚未覆盖的共同输入
 状态，而不是 flatness 算法或 support RAM。最终修复仍须恢复真实 VLC 并通过端到端。
 
+replay 后续增加 MSB-first bit queue，与 `dsce_muxword` 的整段左移追加语义一致，可跨越
+RTL 的零长度节拍以及合并 fragment。正确位序下，RTL 与 function model 对 96 groups
+均输出 `1065/950/942` bits，三路首差异和 mismatch 总数完全相同：luma bit 523、
+chroma bit 470/470。这排除了 `dsce_vlc` 为剩余首因；曾基于错误 LSB-first checker
+提出的 flatness packing 修改已撤回。
+
+修正 C group trace，使 MPP 时记录实际编码的 `quantizedResidualMid` 后，VLC 输入边界
+在 groups 0--36 全部匹配。首差异精确位于全局 group 37（line 1 group 5）：QP=5、
+ICH=0 均一致，C predicted size 为 `6/4/4`，RTL 为 `6/3/5`。将 RTL 的 MMAP 公开输入
+代入 C `SamplePredict(PT_MAP)` 得到与 RTL 完全一致的 predictor，排除了 MMAP 算法。
+C trace 在该 group 不调用 PT_MAP，证明 C 选择 BP；RTL 则输出 `use_bp=0`。
+
+`dsce_bpvector` 当前无条件把 `dsc_use_bp` 清零，且已计算的 vector 没有用于 predictor：
+`dsc_predict_out` 直接取当前原像素，residual 固定使用 `dsc_prev_line_in[0:2]`。同时缺少
+C model 的 `bpCount>=3` 与 recent-edge 门控。该模块不是可通过拉高 enable 修复的完整
+BP 实现。下一步必须以整个 `dsce_bpvector` 为黑盒移植 BP search/predict function model，
+替换进顶层验证 group 37 和端到端，再据此重构真实 RTL。
+
 ## 仿真假设
 
 原始 RTL 包不含 `gprim_sync_stage`、`gprim_sync2_stage` 和 `gram_bist_1r1w`。`support/` 提供仅用于仿真的模型：同步器保留一拍/两拍延迟，RAM 使用同步读写，BIST 不建模。这些模型不能替代工艺库 CDC、冲突语义或 BIST 签核。

@@ -208,6 +208,38 @@ def write_flatness_replay(
     (generated / "flatness_expected.hex").write_text("".join(f"{flag:02x}\n" for flag in flags), encoding="ascii")
 
 
+def write_group_boundary_expected(generated: Path, group_trace: Path) -> None:
+    """把 C model 的 VLC 上游 group 边界转换为 RTL scoreboard 向量。"""
+    residual_words: list[int] = []
+    predicted_words: list[int] = []
+    qp_words: list[int] = []
+    ich_words: list[int] = []
+    for line in group_trace.read_text(encoding="ascii").splitlines():
+        fields = dict(field.split("=", 1) for field in line.split())
+        residual_word = 0
+        for unit in range(3):
+            values = [int(value) for value in fields[f"u{unit}"].split(",")]
+            for value in values:
+                residual_word = (residual_word << 17) | (value & 0x1ffff)
+        residual_words.append(residual_word)
+        predicted_words.append(
+            (int(fields["pred0"]) << 10) |
+            (int(fields["pred1"]) << 5) |
+            int(fields["pred2"])
+        )
+        qp_words.append(int(fields["qp"]))
+        ich_words.append(int(fields["ich"]))
+
+    (generated / "group_residual_expected.hex").write_text(
+        "".join(f"{word:039x}\n" for word in residual_words), encoding="ascii")
+    (generated / "group_predicted_expected.hex").write_text(
+        "".join(f"{word:04x}\n" for word in predicted_words), encoding="ascii")
+    (generated / "group_qp_expected.hex").write_text(
+        "".join(f"{word:02x}\n" for word in qp_words), encoding="ascii")
+    (generated / "group_ich_expected.hex").write_text(
+        "".join(f"{word:01x}\n" for word in ich_words), encoding="ascii")
+
+
 def write_hex(path: Path, data: bytes) -> None:
     path.write_text("".join(f"{value:02x}\n" for value in data), encoding="ascii")
 
@@ -280,11 +312,13 @@ def main() -> None:
     subprocess.run(["make", "model"], cwd=repository, check=True)
     mux_trace = generated / "c_mux_trace.txt"
     vlc_trace = generated / "c_vlc_trace.txt"
+    mmap_trace = generated / "c_mmap_trace.txt"
     group_trace = generated / "c_group_trace.txt"
     rate_trace = generated / "c_rate_trace.txt"
     model_environment = os.environ.copy()
     model_environment["DSC_MUX_TRACE"] = str(mux_trace)
     model_environment["DSC_VLC_TRACE"] = str(vlc_trace)
+    model_environment["DSC_MMAP_TRACE"] = str(mmap_trace)
     model_environment["DSC_GROUP_TRACE"] = str(group_trace)
     model_environment["DSC_RATE_TRACE"] = str(rate_trace)
     subprocess.run(
@@ -294,6 +328,7 @@ def main() -> None:
         check=True,
     )
     write_flatness_replay(generated, pixels, group_trace)
+    write_group_boundary_expected(generated, group_trace)
     muxword_counts = split_mux_trace(mux_trace, generated)
     vlc_counts = split_vlc_trace(vlc_trace, generated)
 

@@ -105,8 +105,10 @@ static void TraceGroupInput(dsc_state_t *dsc_state)
 		dsc_state->origIsFlat, dsc_state->prevFirstFlat);
 	for (unit=0; unit<dsc_state->unitsPerGroup; ++unit)
 		fprintf(trace_file, " u%d=%d,%d,%d pred%d=%d", unit,
-			dsc_state->quantizedResidual[unit][0], dsc_state->quantizedResidual[unit][1],
-			dsc_state->quantizedResidual[unit][2], unit, dsc_state->predictedSize[unit]);
+			dsc_state->midpointSelected[unit] ? dsc_state->quantizedResidualMid[unit][0] : dsc_state->quantizedResidual[unit][0],
+			dsc_state->midpointSelected[unit] ? dsc_state->quantizedResidualMid[unit][1] : dsc_state->quantizedResidual[unit][1],
+			dsc_state->midpointSelected[unit] ? dsc_state->quantizedResidualMid[unit][2] : dsc_state->quantizedResidual[unit][2],
+			unit, dsc_state->predictedSize[unit]);
 	fputc('\n', trace_file);
 	fflush(trace_file);
 }
@@ -294,6 +296,32 @@ int SamplePredict(
 	d = prevLine[h_offset_array_idx+1];
 	e = prevLine[h_offset_array_idx+2];
 	a = currLine[h_offset_array_idx-1];
+
+	// 记录 MMAP 的公开算法边界，用于与 RTL previous-line/right 输入逐事务对照。
+	if (predType == PT_MAP && (hPos % SAMPLES_PER_UNIT) == 0)
+	{
+		static FILE *mmap_trace_file;
+		static int mmap_trace_initialized;
+		if (!mmap_trace_initialized)
+		{
+			const char *trace_path = getenv("DSC_MMAP_TRACE");
+			if (trace_path && trace_path[0])
+				mmap_trace_file = fopen(trace_path, "wt");
+			mmap_trace_initialized = 1;
+		}
+		if (mmap_trace_file)
+		{
+			fprintf(mmap_trace_file,
+				"line=%d group=%d unit=%d q=%d current=%d,%d,%d prev=%d,%d,%d,%d,%d,%d right=%d\n",
+				dsc_state->vPos, hPos / SAMPLES_PER_UNIT, unit, qLevel,
+				currLine[h_offset_array_idx], currLine[h_offset_array_idx+1],
+				currLine[h_offset_array_idx+2], prevLine[h_offset_array_idx-2],
+				prevLine[h_offset_array_idx-1], prevLine[h_offset_array_idx],
+				prevLine[h_offset_array_idx+1], prevLine[h_offset_array_idx+2],
+				prevLine[h_offset_array_idx+3], a);
+			fflush(mmap_trace_file);
+		}
+	}
 
 #define FILT3(a,b,c) (((a)+2*(b)+(c)+2)>>2)
 	filt_c = FILT3(prevLine[h_offset_array_idx-2], prevLine[h_offset_array_idx-1], prevLine[h_offset_array_idx]);

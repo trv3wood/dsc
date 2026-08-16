@@ -48,6 +48,10 @@ module tb_dsc_e2e;
     logic [7:0]   expected_flatness_flags [0:3455];
     logic [4:0]   expected_flatness_qp [0:3455];
     logic [143:0] expected_flatness_pixels [0:3455];
+    logic [152:0] expected_group_residual [0:3455];
+    logic [14:0]  expected_group_predicted [0:3455];
+    logic [4:0]   expected_group_qp [0:3455];
+    logic         expected_group_ich [0:3455];
     int           output_count = 0;
     int           mismatch_count = 0;
     int           mux_output_count = 0;
@@ -80,6 +84,8 @@ module tb_dsc_e2e;
     int           flatness_source_group = 0;
     int           flatness_aligned_group = 0;
     int           rate_qp_group = 0;
+    int           vlc_input_group = 0;
+    int           predict_input_group = 0;
 
 `ifdef DSC_VLC_CAPTURE
     integer       vlc_capture_file;
@@ -237,6 +243,33 @@ module tb_dsc_e2e;
             rate_qp_group++;
         end
         if (dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_valid_fd) begin
+            if (predict_input_group == 37) begin
+                $display("MMAP_INPUT_CO group=%0d,%0d,%0d prev=%0d,%0d,%0d,%0d,%0d,%0d right=%0d q=%0d",
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_group_fd[0].co,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_group_fd[1].co,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_group_fd[2].co,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_prev_line_mmap[0].co,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_prev_line_mmap[1].co,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_prev_line_mmap[2].co,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_prev_line_mmap[3].co,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_prev_line_mmap[4].co,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_prev_line_mmap[5].co,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_right_pixel_dec.co,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_qlevel_c);
+                $display("MMAP_INPUT_CG group=%0d,%0d,%0d prev=%0d,%0d,%0d,%0d,%0d,%0d right=%0d q=%0d",
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_group_fd[0].cg,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_group_fd[1].cg,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_group_fd[2].cg,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_prev_line_mmap[0].cg,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_prev_line_mmap[1].cg,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_prev_line_mmap[2].cg,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_prev_line_mmap[3].cg,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_prev_line_mmap[4].cg,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_prev_line_mmap[5].cg,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_right_pixel_dec.cg,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_qlevel_c);
+            end
+            predict_input_group++;
             if ({dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_group_fd[2],
                  dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_group_fd[1],
                  dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_group_fd[0]} !==
@@ -259,6 +292,68 @@ module tb_dsc_e2e;
             flatness_source_group++;
         end
         if (dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_valid_pd) begin
+            if (vlc_input_group == 37) begin
+                $display("DECISION_BOUNDARY group=37 bp=%0b force=%0b ich_in=%0b qlevel=%0d/%0d mpp=%03b sizes=%0d/%0d/%0d",
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_use_bp_pd,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_force_mpp,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_ich_selected,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_qlevel_y_res,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_qlevel_c_res,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_decision_inst.i_use_mpp,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_vlc_size_dec[0],
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_vlc_size_dec[1],
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_vlc_size_dec[2]);
+                for (int sample = 0; sample < 3; sample++)
+                    $display("DECISION_SAMPLE sample=%0d predict_res=%0d/%0d/%0d quant=%0d/%0d/%0d req=%0d/%0d/%0d",
+                             sample,
+                             dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_decision_inst.i_predict_residual[sample].res_y,
+                             dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_decision_inst.i_predict_residual[sample].res_co,
+                             dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_decision_inst.i_predict_residual[sample].res_cg,
+                             dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_decision_inst.i_quantized_residual[sample].res_y,
+                             dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_decision_inst.i_quantized_residual[sample].res_co,
+                             dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_decision_inst.i_quantized_residual[sample].res_cg,
+                             dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_decision_inst.i_predict_size[sample*3+0],
+                             dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_decision_inst.i_predict_size[sample*3+1],
+                             dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_decision_inst.i_predict_size[sample*3+2]);
+            end
+            if (vlc_input_group < 64) begin
+                if (!expected_group_ich[vlc_input_group] &&
+                    {dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[0].res_y,
+                     dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[1].res_y,
+                     dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[2].res_y,
+                     dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[0].res_co,
+                     dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[1].res_co,
+                     dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[2].res_co,
+                     dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[0].res_cg,
+                     dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[1].res_cg,
+                     dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[2].res_cg} !==
+                    expected_group_residual[vlc_input_group])
+                    $display("VLC_INPUT_RESIDUAL_MISMATCH group=%0d", vlc_input_group);
+                if (!expected_group_ich[vlc_input_group] &&
+                    {dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_vlc_size_dec[0],
+                     dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_vlc_size_dec[1],
+                     dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_vlc_size_dec[2]} !==
+                    expected_group_predicted[vlc_input_group])
+                    $display("VLC_INPUT_PREDICTED_MISMATCH group=%0d expected=%0d/%0d/%0d actual=%0d/%0d/%0d",
+                             vlc_input_group,
+                             expected_group_predicted[vlc_input_group][14:10],
+                             expected_group_predicted[vlc_input_group][9:5],
+                             expected_group_predicted[vlc_input_group][4:0],
+                             dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_vlc_size_dec[0],
+                             dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_vlc_size_dec[1],
+                             dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_vlc_size_dec[2]);
+                if (dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_primary_qp_res !==
+                    expected_group_qp[vlc_input_group])
+                    $display("VLC_INPUT_QP_MISMATCH group=%0d expected=%0d actual=%0d",
+                             vlc_input_group, expected_group_qp[vlc_input_group],
+                             dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_primary_qp_res);
+                if (dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_ich_selected_dec !==
+                    expected_group_ich[vlc_input_group])
+                    $display("VLC_INPUT_ICH_MISMATCH group=%0d expected=%0b actual=%0b",
+                             vlc_input_group, expected_group_ich[vlc_input_group],
+                             dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_ich_selected_dec);
+            end
+            vlc_input_group++;
             if (flatness_aligned_group < 48 &&
                 dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_vlc_flat_flags_aligned !==
                 expected_flatness_flags[flatness_aligned_group])
@@ -443,6 +538,10 @@ module tb_dsc_e2e;
         $readmemh("tests/verilator/generated/flatness_expected.hex", expected_flatness_flags);
         $readmemh("tests/verilator/generated/flatness_qp.hex", expected_flatness_qp);
         $readmemh("tests/verilator/generated/flatness_pixels.hex", expected_flatness_pixels);
+        $readmemh("tests/verilator/generated/group_residual_expected.hex", expected_group_residual);
+        $readmemh("tests/verilator/generated/group_predicted_expected.hex", expected_group_predicted);
+        $readmemh("tests/verilator/generated/group_qp_expected.hex", expected_group_qp);
+        $readmemh("tests/verilator/generated/group_ich_expected.hex", expected_group_ich);
         for (int index = 0; index < kSPC*4+2; index++)
             bist_sram_in[index] = 12'h000;
 

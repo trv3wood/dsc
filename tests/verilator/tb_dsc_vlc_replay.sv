@@ -52,6 +52,13 @@ module tb_dsc_vlc_replay;
     int rtl_mismatches [2:0] = '{default: 0};
     int model_mismatches [2:0] = '{default: 0};
     int size_mismatches = 0;
+    bit expected_bits_0[$];
+    bit expected_bits_1[$];
+    bit expected_bits_2[$];
+    int rtl_bit_count [2:0] = '{default: 0};
+    int model_bit_count [2:0] = '{default: 0};
+    int rtl_bit_mismatches [2:0] = '{default: 0};
+    int model_bit_mismatches [2:0] = '{default: 0};
 
     function automatic logic [20:0] expected_fragment(input int unit, input int index);
         case (unit)
@@ -59,6 +66,10 @@ module tb_dsc_vlc_replay;
             2: expected_fragment = expected_2[index];
             default: expected_fragment = expected_0[index];
         endcase
+    endfunction
+
+    function automatic int expected_fragment_count(input int unit);
+        return unit == 0 ? 9230 : 6675;
     endfunction
 
     always #3 dsc_clk = ~dsc_clk;
@@ -117,6 +128,23 @@ module tb_dsc_vlc_replay;
     always @(posedge dsc_clk) begin : Scoreboard
         for (int unit = 0; unit < 3; unit++) begin
             if (rtl_valid[unit]) begin
+                for (int bit_index = int'(rtl_size[unit]) - 1; bit_index >= 0; bit_index--) begin
+                    bit expected_bit;
+                    case (unit)
+                        1: expected_bit = expected_bits_1[rtl_bit_count[unit]];
+                        2: expected_bit = expected_bits_2[rtl_bit_count[unit]];
+                        default: expected_bit = expected_bits_0[rtl_bit_count[unit]];
+                    endcase
+                    if (rtl_data[unit][bit_index] !== expected_bit) begin
+                        if (rtl_bit_mismatches[unit] < 2)
+                            $display("RTL_BIT_MISMATCH unit=%0d bit=%0d fragment=%0d fragment_bit=%0d expected=%0b actual=%0b",
+                                     unit, rtl_bit_count[unit],
+                                     rtl_count[unit], bit_index,
+                                     expected_bit, rtl_data[unit][bit_index]);
+                        rtl_bit_mismatches[unit]++;
+                    end
+                    rtl_bit_count[unit]++;
+                end
                 if ({rtl_size[unit], rtl_data[unit]} !== expected_fragment(unit, rtl_count[unit])) begin
                     if (rtl_mismatches[unit] < 2)
                         $display("RTL_MISMATCH unit=%0d fragment=%0d expected=%06x actual=%06x",
@@ -127,6 +155,23 @@ module tb_dsc_vlc_replay;
                 rtl_count[unit]++;
             end
             if (model_valid[unit]) begin
+                for (int bit_index = int'(model_size[unit]) - 1; bit_index >= 0; bit_index--) begin
+                    bit expected_bit;
+                    case (unit)
+                        1: expected_bit = expected_bits_1[model_bit_count[unit]];
+                        2: expected_bit = expected_bits_2[model_bit_count[unit]];
+                        default: expected_bit = expected_bits_0[model_bit_count[unit]];
+                    endcase
+                    if (model_data[unit][bit_index] !== expected_bit) begin
+                        if (model_bit_mismatches[unit] < 2)
+                            $display("MODEL_BIT_MISMATCH unit=%0d bit=%0d fragment=%0d fragment_bit=%0d expected=%0b actual=%0b",
+                                     unit, model_bit_count[unit],
+                                     model_count[unit], bit_index,
+                                     expected_bit, model_data[unit][bit_index]);
+                        model_bit_mismatches[unit]++;
+                    end
+                    model_bit_count[unit]++;
+                end
                 if ({model_size[unit], model_data[unit]} !== expected_fragment(unit, model_count[unit])) begin
                     if (model_mismatches[unit] < 2)
                         $display("MODEL_MISMATCH unit=%0d fragment=%0d expected=%06x actual=%06x",
@@ -148,6 +193,18 @@ module tb_dsc_vlc_replay;
         $readmemh("tests/verilator/generated/expected_ssp0_vlc.hex", expected_0);
         $readmemh("tests/verilator/generated/expected_ssp1_vlc.hex", expected_1);
         $readmemh("tests/verilator/generated/expected_ssp2_vlc.hex", expected_2);
+        for (int fragment = 0; fragment < expected_fragment_count(0); fragment++) begin
+            for (int bit_index = int'(expected_0[fragment][20:16]) - 1; bit_index >= 0; bit_index--)
+                expected_bits_0.push_back(expected_0[fragment][bit_index]);
+        end
+        for (int fragment = 0; fragment < expected_fragment_count(1); fragment++) begin
+            for (int bit_index = int'(expected_1[fragment][20:16]) - 1; bit_index >= 0; bit_index--)
+                expected_bits_1.push_back(expected_1[fragment][bit_index]);
+        end
+        for (int fragment = 0; fragment < expected_fragment_count(2); fragment++) begin
+            for (int bit_index = int'(expected_2[fragment][20:16]) - 1; bit_index >= 0; bit_index--)
+                expected_bits_2.push_back(expected_2[fragment][bit_index]);
+        end
         repeat (4) @(posedge dsc_clk);
         dsc_reset_n = 1'b1;
         cfg_pps.bits_per_component = 4'd8;
@@ -175,6 +232,11 @@ module tb_dsc_vlc_replay;
         $display("VLC_REPLAY model_fragments=%0d/%0d/%0d model_mismatches=%0d/%0d/%0d size_mismatches=%0d",
                  model_count[0], model_count[1], model_count[2],
                  model_mismatches[0], model_mismatches[1], model_mismatches[2], size_mismatches);
+        $display("VLC_REPLAY_BITS rtl=%0d/%0d/%0d mismatches=%0d/%0d/%0d model=%0d/%0d/%0d mismatches=%0d/%0d/%0d",
+                 rtl_bit_count[0], rtl_bit_count[1], rtl_bit_count[2],
+                 rtl_bit_mismatches[0], rtl_bit_mismatches[1], rtl_bit_mismatches[2],
+                 model_bit_count[0], model_bit_count[1], model_bit_count[2],
+                 model_bit_mismatches[0], model_bit_mismatches[1], model_bit_mismatches[2]);
         $finish;
     end
 endmodule
