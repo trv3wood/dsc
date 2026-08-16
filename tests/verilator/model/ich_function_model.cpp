@@ -68,9 +68,13 @@ Pixel unpack_residual(std::uint64_t word)
 
 int ceil_log2(int value)
 {
+    // 与 C reference model (dsc_utils.c) 一致：返回 value 的二进制位宽。
+    // 注意对精确 2 的幂（如 8）返回 4 而非 3，不能用数学上的 ceil(log2)。
     int result = 0;
-    for (int limit = 1; limit < value; limit <<= 1)
+    while (value > 0) {
         ++result;
+        value >>= 1;
+    }
     return result;
 }
 
@@ -255,7 +259,8 @@ extern "C" void dsc_ich_model_decide(
         choose = false;
 
     if ((state.group_count - 1 >= 392 && state.group_count - 1 <= 398) ||
-        state.group_count - 1 == 504) {
+        state.group_count - 1 == 504 ||
+        (state.group_count - 1 >= 588 && state.group_count - 1 <= 594)) {
         std::fprintf(stderr,
             "ICH_MODEL group=%d hit=%d%d%d idx=%d/%d/%d bits=%d/%d log=%d/%d cost=%d/%d flat=%d force=%d choose=%d\n",
             state.group_count - 1,

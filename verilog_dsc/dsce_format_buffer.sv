@@ -68,12 +68,15 @@ module dsce_format_buffer
     logic                           i_dsc_fifo_we;
     logic [63:0]                    i_dsc_fifo_wdata;
     logic                           i_dsc_frame_toggle;
+    logic [15:0]                    i_dsc_write_count;
+    logic [15:0]                    i_dsc_target_words;
 
     // ----- fifo read management ----- //
     enum {  kRS_XMIT_DELAY,
             kRS_DATA_INIT,
             kRS_DATA_READY,
-            kRS_DATA_LAST
+            kRS_DATA_LAST,
+            kRS_DATA_PAD
     } i_read_state;
 
     logic [7:0]                     i_axi_raddr, i_axi_waddr, i_axi_waddr_gc, i_axi_raddr_p1;
@@ -82,6 +85,12 @@ module dsce_format_buffer
     logic                           i_axi_read_init;
     logic [1:0]                     i_axi_frame_toggle;
     logic                           i_axi_start_of_frame;
+    logic [15:0]                    i_axi_write_count;
+    logic [15:0]                    i_axi_target_words;
+    logic [15:0]                    i_axi_out_count;
+    logic [15:0]                    i_axi_write_count_prev;
+    logic [6:0]                     i_axi_write_stable;
+    logic                           i_axi_write_idle;
 
     // ----- initial delay counters ----- //
     logic [9:0]                     i_initial_xmit_delay;
@@ -116,7 +125,8 @@ module dsce_format_buffer
 
     // signal assignments
     always_comb begin : SignalMap
-        axi_muxword_out = i_axi_muxword;
+        // 零填充阶段直接输出全零 muxword，不读取 RAM。
+        axi_muxword_out = (i_read_state == kRS_DATA_PAD) ? 64'd0 : i_axi_muxword;
 
         i_axi_waddr = dsce_gray_code_to_binary_8(i_axi_waddr_gc);
         i_axi_ren = (i_axi_read_init == 1'b1 || (axi_tvalid_out == 1'b1 && axi_tready_out == 1'b1 && i_read_state == kRS_DATA_READY)) ? 1'b1 : 1'b0;
@@ -168,6 +178,8 @@ module dsce_format_buffer
             i_dsc_fifo_wdata <= 64'd0;
             i_dsc_waddr <= 8'h00;
             i_dsc_waddr_gc <= 8'h00;
+            i_dsc_write_count <= 16'd0;
+            i_dsc_target_words <= 16'd0;
 
         end else begin
 
@@ -175,12 +187,20 @@ module dsce_format_buffer
             i_dsc_fifo_we <= dsc_muxword_valid_in;
             i_dsc_fifo_wdata <= (i_bits_per_component < 4'd12) ? {16'h0000, dsc_muxword_in[47:0]} : dsc_muxword_in;
 
+            // 目标总字数 = chunk_size * slice_height 字节换算成 muxword 数
+            if (dsc_pps_update == 1'b1) begin
+                i_dsc_target_words <= (cfg_pps.chunk_size * cfg_pps.slice_height) /
+                                      ((i_bits_per_component < 4'd12) ? 16'd6 : 16'd8);
+            end
+
             // write address tracking
             if (dsc_start_of_frame == 1'b1) begin
                 i_dsc_waddr <= '{default: 1'b0};
+                i_dsc_write_count <= 16'd0;
             end else if (i_dsc_fifo_we == 1'b1) begin
                 i_dsc_waddr <= i_dsc_waddr + 8'd1;
                 i_dsc_waddr_gc <= dsce_binary_to_gray_code_8(i_dsc_waddr + 8'd1);
+                i_dsc_write_count <= i_dsc_write_count + 16'd1;
             end // if
 
         end // if
@@ -198,6 +218,7 @@ module dsce_format_buffer
             i_read_state <= kRS_XMIT_DELAY;
             i_axi_read_init <= 1'b0;
             i_axi_raddr <= 8'h00;
+            i_axi_out_count <= 16'd0;
 
         end else begin
 
@@ -208,6 +229,7 @@ module dsce_format_buffer
             if (i_axi_start_of_frame == 1'b1) begin
                 i_read_state <= kRS_XMIT_DELAY;
                 axi_tvalid_out <= 1'b0;
+                i_axi_out_count <= 16'd0;
             end else begin
                 case (i_read_state)
                     kRS_XMIT_DELAY:  begin
@@ -215,6 +237,10 @@ module dsce_format_buffer
                         if (i_axi_raddr != i_axi_waddr) begin
                             i_read_state <= kRS_DATA_INIT;
                             i_axi_read_init <= 1'b1;
+                        end else if (i_axi_write_idle == 1'b1 && i_axi_write_count != 16'd0 &&
+                                     i_axi_out_count < i_axi_target_words) begin
+                            // 数据已读尽、编码器已停止写（写计数稳定）且未达到目标长度：零填充。
+                            i_read_state <= kRS_DATA_PAD;
                         end // if
                     end // kRS_XMIT_DELAY
 
@@ -242,6 +268,16 @@ module dsce_format_buffer
                         end // if
                     end // kRS_DATA_LAST
 
+                    kRS_DATA_PAD:  begin
+                        axi_tvalid_out <= 1'b1;
+                        if (axi_tready_out == 1'b1) begin
+                            if (i_axi_out_count + 16'd1 >= i_axi_target_words) begin
+                                axi_tvalid_out <= 1'b0;
+                                i_read_state <= kRS_XMIT_DELAY;
+                            end
+                        end // if
+                    end // kRS_DATA_PAD
+
                     default:  begin
                         i_read_state <= kRS_XMIT_DELAY;
                         axi_tvalid_out <= 1'b0;
@@ -257,6 +293,13 @@ module dsce_format_buffer
             end else if (i_axi_ren == 1'b1) begin
                 i_axi_raddr <= i_axi_raddr_p1;
             end // if
+
+            // 输出字数统计（数据 + 零填充）
+            if (i_axi_start_of_frame == 1'b1) begin
+                i_axi_out_count <= 16'd0;
+            end else if (axi_tvalid_out == 1'b1 && axi_tready_out == 1'b1) begin
+                i_axi_out_count <= i_axi_out_count + 16'd1;
+            end // if
         end // if
     end : AXIRead
 
@@ -271,6 +314,38 @@ module dsce_format_buffer
     end endgenerate
     gprim_sync_stage  sync_xmit_inst  (.sync_clk (axi_clk), .reset_n (axi_reset_n), .async_in (i_dsc_xmit_okay), .sync_out(i_axi_xmit_okay));
     gprim_sync2_stage sync_frame_inst (.sync_clk (axi_clk), .reset_n (axi_reset_n), .async_in (i_dsc_frame_toggle), .sync_out(i_axi_frame_toggle));
+
+    // 目标总字数在 pps_update 后静止，跨时钟域同步到 AXI 读域。
+    generate for (genvar tw = 0; tw < 16; tw = tw + 1) begin : gen_target
+        gprim_sync_stage  sync_target_inst (.sync_clk (axi_clk), .reset_n(axi_reset_n), .async_in (i_dsc_target_words[tw]), .sync_out(i_axi_target_words[tw]));
+    end endgenerate
+    // 写字数用于判断编码器是否已停止写。
+    generate for (genvar wc = 0; wc < 16; wc = wc + 1) begin : gen_wcount
+        gprim_sync_stage  sync_wcount_inst (.sync_clk (axi_clk), .reset_n(axi_reset_n), .async_in (i_dsc_write_count[wc]), .sync_out(i_axi_write_count[wc]));
+    end endgenerate
+
+    // 检测 AXI 域中写计数是否持续稳定（编码器停止写）。要求连续 64 拍不变，
+    // 以避免行切换等短暂停顿误判为编码完成。
+    always_ff@(posedge axi_clk or negedge axi_reset_n) begin : WriteIdleDetect
+        if (axi_reset_n == 1'b0) begin
+            i_axi_write_count_prev <= 16'd0;
+            i_axi_write_stable <= 7'd0;
+            i_axi_write_idle <= 1'b0;
+        end else if (i_axi_start_of_frame == 1'b1) begin
+            i_axi_write_count_prev <= 16'd0;
+            i_axi_write_stable <= 7'd0;
+            i_axi_write_idle <= 1'b0;
+        end else begin
+            if (i_axi_write_count == i_axi_write_count_prev) begin
+                if (i_axi_write_stable != 7'd63)
+                    i_axi_write_stable <= i_axi_write_stable + 7'd1;
+            end else begin
+                i_axi_write_stable <= 7'd0;
+            end
+            i_axi_write_count_prev <= i_axi_write_count;
+            i_axi_write_idle <= (i_axi_write_stable == 7'd63);
+        end // if
+    end : WriteIdleDetect
 
 
     gram_bist_1r1w

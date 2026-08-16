@@ -340,7 +340,7 @@ module dsce_rate
         case (i_sterm_decisions) inside
             7'b??????1: i_st_qp = i_rc_range_parameters[14][10:6];
             7'b?????10: i_st_qp = i_min_qp;
-            7'b????100: i_st_qp = dsce_min_qp(i_current_qp + 5'd2, i_adj_max_qp);
+            7'b????100: i_st_qp = dsce_clamp_qp(i_current_qp + 5'd2, i_min_qp, i_adj_max_qp);
             7'b???1000: i_st_qp = dsce_clamp_qp(i_current_qp, i_min_qp, i_adj_max_qp);
             7'b??10000: i_st_qp = (i_dsc_version_2_active == 1'b1) ? dsce_max_qp(i_current_qp_minus_1, i_adj_min_qp) : dsce_max_qp(i_current_qp_minus_1, i_min_qp);
             7'b?100000: i_st_qp = dsce_clamp_qp(i_current_qp_minus_1, i_min_qp, i_max_qp);

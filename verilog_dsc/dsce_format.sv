@@ -94,6 +94,10 @@ module dsce_format
     logic                           i_muxword_last_sb;
     logic [63:0]                    i_muxword_sb;
 
+    // slice 行计数：第 slice_height 个行尾 last 是 slice 的最后一个 group。
+    logic [15:0]                    i_slice_line_count;
+    logic                           i_slice_last;
+
     // ------------------------------------------------------------------------------------------------------------
     //                                             internal blocks
     // ------------------------------------------------------------------------------------------------------------
@@ -107,6 +111,22 @@ module dsce_format
         dsc_coded_group_size = ({2'b00, i_coded_unit_size_vlc[0]} + {2'b00, i_coded_unit_size_vlc[1]} + {2'b00, i_coded_unit_size_vlc[2]});
         dsc_rc_size_group = ({2'b00, i_rcsg_vlc[0]} + {2'b00, i_rcsg_vlc[1]} + {2'b00, i_rcsg_vlc[2]});
     end : SignalMap
+
+
+    // 检测 slice 的最后一个 group（第 slice_height 个行尾 last）。计数寄存，slice-last 组合输出，
+    // 保证与当前 last fragment 同拍。
+    assign i_slice_last = (i_last_vlc[0] == 1'b1) &&
+                          (i_slice_line_count + 16'd1 == cfg_pps.slice_height);
+
+    always_ff@(posedge dsc_clk or negedge dsc_reset_n) begin : SliceLastDetect
+        if (dsc_reset_n == 1'b0) begin
+            i_slice_line_count <= 16'd0;
+        end else if (dsc_pps_update == 1'b1) begin
+            i_slice_line_count <= 16'd0;
+        end else if (i_last_vlc[0] == 1'b1) begin
+            i_slice_line_count <= i_slice_line_count + 16'd1;
+        end
+    end : SliceLastDetect
 
 
     // ---------------------------------------------
@@ -168,6 +188,7 @@ module dsce_format
             // input stream from VLC
             .dsc_vlc_valid_in       (i_valid_vlc[mx]),
             .dsc_vlc_last_in        (i_last_vlc[mx]),
+            .dsc_slice_last_in      (i_slice_last),
             .dsc_stream_data_in     (i_data_vlc[mx]),
             .dsc_stream_size_in     (i_size_vlc[mx]),
             // output mux word

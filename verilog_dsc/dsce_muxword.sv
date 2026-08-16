@@ -40,6 +40,7 @@ module dsce_muxword
     // input stream from VLC
     input  logic                    dsc_vlc_valid_in,       // valid data in
     input  logic                    dsc_vlc_last_in,        // last group in
+    input  logic                    dsc_slice_last_in,      // last group in the slice (not just line)
     input  logic [15:0]             dsc_stream_data_in,     // data input
     input  logic [4:0]              dsc_stream_size_in,     // size of the current data
 
@@ -66,6 +67,10 @@ module dsce_muxword
     logic [63:0]                    i_remainder_word;
     logic [4:0]                     i_remainder_shift_amount;
     logic [63:0]                    i_output_word;
+    logic [63:0]                    i_flush_word;        // 部分字左移对齐后的输入
+    logic [63:0]                    i_flush_output_word; // 部分字按整字字节序的输出
+    logic [63:0]                    i_remainder_shifted; // 余量左移对齐后的输入
+    logic [63:0]                    i_remainder_word_out; // 余量按整字字节序的输出
 
     logic                           i_muxword_staging_valid;
     logic [63:0]                    i_muxword_staging;
@@ -98,6 +103,13 @@ module dsce_muxword
             5'd7:       i_remainder_word = {57'd0, dsc_stream_data_in[6:0]};
             5'd8:       i_remainder_word = {56'd0, dsc_stream_data_in[7:0]};
             5'd9:       i_remainder_word = {55'd0, dsc_stream_data_in[8:0]};
+            5'd10:      i_remainder_word = {54'd0, dsc_stream_data_in[9:0]};
+            5'd11:      i_remainder_word = {53'd0, dsc_stream_data_in[10:0]};
+            5'd12:      i_remainder_word = {52'd0, dsc_stream_data_in[11:0]};
+            5'd13:      i_remainder_word = {51'd0, dsc_stream_data_in[12:0]};
+            5'd14:      i_remainder_word = {50'd0, dsc_stream_data_in[13:0]};
+            5'd15:      i_remainder_word = {49'd0, dsc_stream_data_in[14:0]};
+            5'd16:      i_remainder_word = {48'd0, dsc_stream_data_in[15:0]};
             default:    i_remainder_word = 64'd0;
         endcase
 
@@ -115,6 +127,13 @@ module dsce_muxword
             5'd7:       i_input_word = {i_mux_buffer[56:0], i_input_data[6:0]};
             5'd8:       i_input_word = {i_mux_buffer[55:0], i_input_data[7:0]};
             5'd9:       i_input_word = {i_mux_buffer[54:0], i_input_data[8:0]};
+            5'd10:      i_input_word = {i_mux_buffer[53:0], i_input_data[9:0]};
+            5'd11:      i_input_word = {i_mux_buffer[52:0], i_input_data[10:0]};
+            5'd12:      i_input_word = {i_mux_buffer[51:0], i_input_data[11:0]};
+            5'd13:      i_input_word = {i_mux_buffer[50:0], i_input_data[12:0]};
+            5'd14:      i_input_word = {i_mux_buffer[49:0], i_input_data[13:0]};
+            5'd15:      i_input_word = {i_mux_buffer[48:0], i_input_data[14:0]};
+            5'd16:      i_input_word = {i_mux_buffer[47:0], i_input_data[15:0]};
             default:    i_input_word = i_mux_buffer;
         endcase
 
@@ -126,6 +145,30 @@ module dsce_muxword
         end else begin
             i_output_word = {i_input_word[7:0],   i_input_word[15:8],  i_input_word[23:16], i_input_word[31:24],
                              i_input_word[39:32], i_input_word[47:40], i_input_word[55:48], i_input_word[63:56]};
+        end // if
+
+        // ----- 部分字/余量 flush 输出 ----- //
+        // 不足 48 位的尾部数据先左移到字节对齐位置（高 48 位），再按整字相同的字节序输出，
+        // 使填充位位于最后一个字节的末尾，与 reference model 的 shifter 语义一致。
+        i_remainder_shifted = i_mux_buffer << (i_max_bits_per_word - i_bits_in_word);
+        if (i_mux64_mode == 1'b0) begin
+            i_flush_word = i_input_word << (i_max_bits_per_word - i_bits_in_next_word);
+            i_flush_output_word[63:48] = 16'h0000;
+            i_flush_output_word[47:0] = {i_flush_word[7:0],   i_flush_word[15:8], i_flush_word[23:16],
+                                         i_flush_word[31:24], i_flush_word[39:32], i_flush_word[47:40]};
+            i_remainder_word_out[63:48] = 16'h0000;
+            i_remainder_word_out[47:0] = {i_remainder_shifted[7:0],   i_remainder_shifted[15:8],
+                                          i_remainder_shifted[23:16], i_remainder_shifted[31:24],
+                                          i_remainder_shifted[39:32], i_remainder_shifted[47:40]};
+        end else begin
+            i_flush_word = i_input_word << (i_max_bits_per_word - i_bits_in_next_word);
+            i_flush_output_word = {i_flush_word[7:0],   i_flush_word[15:8],  i_flush_word[23:16],
+                                   i_flush_word[31:24], i_flush_word[39:32], i_flush_word[47:40],
+                                   i_flush_word[55:48], i_flush_word[63:56]};
+            i_remainder_word_out = {i_remainder_shifted[7:0],   i_remainder_shifted[15:8],
+                                    i_remainder_shifted[23:16], i_remainder_shifted[31:24],
+                                    i_remainder_shifted[39:32], i_remainder_shifted[47:40],
+                                    i_remainder_shifted[55:48], i_remainder_shifted[63:56]};
         end // if
     end : SignalMap
 
@@ -188,6 +231,17 @@ module dsce_muxword
                         i_muxword_staging <= i_output_word;
                         i_mux_buffer <= i_remainder_word;
                         i_bits_in_word <= i_bits_in_next_word - i_max_bits_per_word;
+                        // 最后一个 fragment 恰好补满且还有溢出位时，下一拍把余量作为尾部字发射。
+                        if (dsc_vlc_last_in == 1'b1 && dsc_slice_last_in == 1'b1 &&
+                            i_bits_in_next_word != i_max_bits_per_word) begin
+                            i_muxword_flush <= 1'b1;
+                        end
+                    end else if (dsc_vlc_last_in == 1'b1 && dsc_slice_last_in == 1'b1) begin
+                        // slice 末尾：不足 48 位的部分字左移对齐后发射。
+                        i_muxword_staging_valid <= 1'b1;
+                        i_muxword_staging <= i_flush_output_word;
+                        i_mux_buffer <= 64'd0;
+                        i_bits_in_word <= 7'd0;
                     end else begin
                         i_muxword_staging_valid <= 1'b0;
                         i_mux_buffer <= i_input_word;
@@ -197,7 +251,7 @@ module dsce_muxword
             end else if (i_muxword_flush == 1'b1) begin
                 i_muxword_flush <= 1'b0;
                 i_muxword_staging_valid <= 1'b1;
-                i_muxword_staging <= i_mux_buffer;
+                i_muxword_staging <= i_remainder_word_out;
                 i_bits_in_word <= 7'd0;
             end // if
 

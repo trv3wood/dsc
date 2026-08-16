@@ -84,6 +84,7 @@ module tb_dsc_e2e;
     int           flat_adjust_group = 0;
     int           flatness_source_group = 0;
     int           flatness_aligned_group = 0;
+    int           flatness_aligned_print_count = 0;
     int           rate_qp_group = 0;
     int           vlc_input_group = 0;
     int           vlc_stable_group = 0;
@@ -141,7 +142,44 @@ module tb_dsc_e2e;
     end
 `endif
 
+`ifdef DSC_LUM_FRAG_CAPTURE
+    // 转储 RTL ssp0 (luma) VLC 输出片段，用于离线重建位流并与 C model 对比。
+    integer       lum_frag_file;
+    int           lum_frag_count = 0;
+    int           lum_mw_file;
+    int           lum_mw_count = 0;
+
+    initial begin
+        lum_frag_file = $fopen("tests/verilator/generated/rtl_lum_frag.hex", "w");
+        if (lum_frag_file == 0)
+            $fatal(1, "无法创建 luma fragment trace");
+        lum_mw_file = $fopen("tests/verilator/generated/rtl_lum_muxword.hex", "w");
+        if (lum_mw_file == 0)
+            $fatal(1, "无法创建 luma muxword trace");
+    end
+
+    always @(posedge dsc_clk) begin : LumFragCapture
+        if (async_reset_n &&
+            dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.i_valid_vlc[0]) begin
+            $fwrite(lum_frag_file, "frag=%0d size=%0d data=%04x last=%0b\n",
+                    lum_frag_count,
+                    dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.i_size_vlc[0],
+                    dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.i_data_vlc[0],
+                    dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.i_last_vlc[0]);
+            lum_frag_count++;
+        end
+        if (async_reset_n &&
+            dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.i_valid_mw[0]) begin
+            $fwrite(lum_mw_file, "word=%0d data=%012x\n",
+                    lum_mw_count,
+                    dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.i_muxword[0][47:0]);
+            lum_mw_count++;
+        end
+    end
+`endif
+
     // 在下降沿观察下一次 VLC 采样前已稳定的组合信号，排除上升沿 NBA 调度影响。
+`ifndef DSC_ICH_MODEL_SUBSTITUTE
     always @(negedge dsc_clk) begin : StableIchTrace
         if (async_reset_n && dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_valid_pd) begin
             if (vlc_stable_group == 395 || vlc_stable_group == 504 ||
@@ -162,6 +200,7 @@ module tb_dsc_e2e;
             vlc_stable_group++;
         end
     end
+`endif
 
     always #5 apb_clk = ~apb_clk;
     always #4 axi_clk = ~axi_clk;
@@ -461,12 +500,15 @@ module tb_dsc_e2e;
                 end
             end
             vlc_input_group++;
-            if (flatness_aligned_group < 48 &&
+            if (flatness_aligned_group < 3456 &&
                 dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_vlc_flat_flags_aligned !==
-                expected_flatness_flags[flatness_aligned_group])
-                $display("FLAT_ALIGNED_MISMATCH group=%0d expected=%02x actual=%02x",
-                         flatness_aligned_group, expected_flatness_flags[flatness_aligned_group],
-                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_vlc_flat_flags_aligned);
+                expected_flatness_flags[flatness_aligned_group]) begin
+                if (flatness_aligned_print_count < 8)
+                    $display("FLAT_ALIGNED_MISMATCH group=%0d expected=%02x actual=%02x",
+                             flatness_aligned_group, expected_flatness_flags[flatness_aligned_group],
+                             dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_vlc_flat_flags_aligned);
+                flatness_aligned_print_count++;
+            end
             flatness_aligned_group++;
         end
         if (dut.dsc_pps_update)
@@ -546,7 +588,8 @@ module tb_dsc_e2e;
         end
         if (dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_valid_pipe[2]) begin
             if ((rate_group < 12) || ((rate_group >= 20) && (rate_group < 42)) ||
-                ((rate_group >= 380) && (rate_group < 390)))
+                ((rate_group >= 380) && (rate_group < 390)) ||
+                ((rate_group >= 700) && (rate_group < 712)))
                 $display("RATE group=%0d coded=%0d rc=%0d fullness=%0d target=%0d min=%0d max=%0d prev=%0d prev2=%0d current=%0d current_st=%0d inc=%0d/%0d next=%0d decisions=%02x edge=%0d factor=%0d v2=%0b cfgver=%0d",
                          rate_group,
                          dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_coded_group_size,
