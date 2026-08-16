@@ -78,6 +78,7 @@ module dsce_flat_flags
 
     // ----- pipeline signals ----- //
     logic   [3:1]           i_stage_valid;
+    logic   [3:1]           i_stage_last;
     logic   [2:0]           i_flush_count;
     logic                   i_flush_group;
 
@@ -208,6 +209,7 @@ module dsce_flat_flags
             dsc_vlc_flat_flags_out <= kDSC_FLAT_FLAGS_INIT;
 
             i_stage_valid <= 3'b000;
+            i_stage_last <= 3'b000;
             i_flush_count <= 3'd0;
             i_flush_group <= 1'b0;
             i_output_supergroup_index <= 2'd0;
@@ -222,23 +224,24 @@ module dsce_flat_flags
             dsc_group_last_out <= 1'b0;
             i_flush_group <= 1'b0;
             i_stage_valid <= 3'b000;
+            i_stage_last <= 3'b000;
 
             // ----- stage 0, input valid ----- //
             if (dsc_group_valid_in == 1'b1 || i_flush_group == 1'b1) begin
                 i_stage_valid[1] <= 1'b1;
-                if (dsc_group_last_in == 1'b1) begin
-                    i_flush_count <= 3'd5;
-                end // if
+                i_stage_last[1] <= dsc_group_valid_in && dsc_group_last_in;
             end // if
 
             // ----- stage 1 ----- //
             if (i_stage_valid[1] == 1'b1) begin
                 i_stage_valid[2] <= 1'b1;
+                i_stage_last[2] <= i_stage_last[1];
             end // if
 
             // ----- stage 2 ----- //
             if (i_stage_valid[2] == 1'b1) begin
                 i_stage_valid[3] <= 1'b1;
+                i_stage_last[3] <= i_stage_last[2];
             end // if
 
             // ----- stage 3 ----- //
@@ -248,13 +251,13 @@ module dsce_flat_flags
                     logic scan_prev_flat;
                     dsc_group_valid_out <= 1'b1;
                     dsc_group_out <= i_super_group_0;
-                    dsc_group_last_out <= (i_flush_count == 3'd1) ? 1'b1 : 1'b0;
+                    dsc_group_last_out <= (i_flush_count == 3'd2) ? 1'b1 : 1'b0;
                     dsc_vlc_flat_flags_out <= kDSC_FLAT_FLAGS_INIT;
 
                     dsc_vlc_flat_flags_out.group_flatness_type <=
                         (i_current_first_flat_valid && i_output_supergroup_index == i_current_first_flat) ?
                         (i_current_flatness_type ? kDSC_VERY_FLAT : kDSC_SOMEWHAT_FLAT) : kDSC_NOT_FLAT;
-                    if (i_dsc_version_2_active && i_flush_count == 3'd1)
+                    if (i_dsc_version_2_active && i_flush_count == 3'd2)
                         dsc_vlc_flat_flags_out.group_flatness_type <= kDSC_VERY_FLAT;
 
                     if (i_output_supergroup_index == 2'd0 && i_current_first_flat_valid) begin
@@ -288,10 +291,13 @@ module dsce_flat_flags
                 end // if
 
                 // flush logic
-                if (i_flush_count[2:1] != 2'd0) begin
+                if (i_stage_last[3]) begin
+                    i_flush_group <= 1'b1;
+                    i_flush_count <= 3'd5;
+                end else if (i_flush_count > 3'd2) begin
                     i_flush_group <= 1'b1;
                     i_flush_count <= i_flush_count - 3'd1;
-                end else begin
+                end else if (i_flush_count != 3'd0) begin
                     i_flush_count <= 3'd0;
                 end // if
             end // if
@@ -388,7 +394,7 @@ module dsce_flat_flags
             if (dsc_start_of_slice == 1'b1) begin
                 i_buffer_valid <= 4'b0000;
             end else if (i_stage_valid[3] == 1'b1) begin
-                i_buffer_valid <= (i_flush_count == 3'd0 || i_flush_count == 3'd5) ? {1'b1, i_buffer_valid[3:1]} : {1'b0, i_buffer_valid[3:1]};
+                i_buffer_valid <= (i_flush_count == 3'd0) ? {1'b1, i_buffer_valid[3:1]} : {1'b0, i_buffer_valid[3:1]};
             end // if
 
         end // if

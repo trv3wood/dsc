@@ -60,16 +60,28 @@ flatness 状态及期望 flags；C group trace 只交叉检查坐标和状态移
 QP 按输出事务序号驱动，输入 valid 每三个处理周期出现一次。该 adapter 不经过预测器、
 码控、VLC 或绝对周期 golden 注入。
 
-固定 seed `0x445343` 的 line 1 replay 当前预期失败，共有 6 个 flag 事务差异：期望在
-group 3 输出 `next_flatness_flag=1`、group 4 输出 flatness 描述及 group 7 标记 very-flat；
-RTL 对应事务延迟到 group 7/8，随后 group 11/12 状态也错误。首差异为 group 3、QP 4，
-期望 packed flags `0x80`，实际 `0x00`。这说明首个未解决问题位于
-`dsce_flat_check → dsce_flat_flags` 的 look-ahead 数据/valid 对齐，而不是 VLC packing。
+边界 trace 证明原 RTL 把 Check 1/2 错算成目标 group 左侧窗口，缺少 C model 要求的
+向右两组 look-ahead。`dsce_flat_check` 现按“目标组末像素+下一组”和“后续两个完整组”
+计算窗口，并修复了行尾 padding 状态跨行残留。`dsce_flat_flags` 同时修复了 stage 0 的
+last 被 stage 3 清零覆盖、提前 flush 以及 `group_flatness_type` 使用 `1/2` 而非包定义
+`2/3` 的问题。
 
-replay 还确认 `group_flatness_type` 原来使用 `1/2`，与包中
-`kDSC_SOMEWHAT_FLAT=2`、`kDSC_VERY_FLAT=3` 不符；RTL 已改为使用命名常量。该修复尚未
-使 replay 或端到端对拍通过。下一步应记录每个 `dsc_check_diff_in` 对应的源 group，修复
-晚一个 supergroup 的检测，再恢复真实 RTL 运行 replay 和端到端回归。
+当前 replay 连续覆盖完整 108 行、3456 groups；逐事务检查原始像素、两个 check-diff、
+完整 flags 和 last，seed `0x445343` 下通过，单行 replay 在 seed `0x1234` 及 valid
+周期 3/4 下也通过。该结果只验证 flatness 模块边界，不代表端到端编码正确。
+
+### VLC function-model 替换
+
+`make rtl-e2e-vlc-model GOLDEN_PATTERN=flatness` 通过 DPI 用输入驱动的 C++ function
+model 选择性替换 `dsce_vlc` 的 chroma ICH 发射路径。C reference model 对 unit 1/2
+只发送一个 5-bit history index；原 RTL 先产生额外的零长度 prefix 事务。修正 adapter
+的当前组/已寄存 ICH 相位后，SSP1/2 从 fragment 36 开始的早期差异消失，构成该
+VLC 子路径有缺陷的 A/B 证据。
+
+替换后整机仍在 payload byte 113 首差异，下一内部差异位于 luma ICH fragment 顺序：
+C model 的边界序列为 5-bit index 与 1-bit prefix 的既定事务顺序，RTL 顺序相反。
+因此下一步应把 function model 扩展到 luma ICH，再运行整机替换；通过后才修改真实
+`dsce_vlc`。当前 syntax FIFO overflow 仍存在，不能宣称完整功能通过。
 
 ## 仿真假设
 

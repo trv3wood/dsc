@@ -1,4 +1,4 @@
-.PHONY: golden images model model-clean model-run rtl-clean rtl-e2e rtl-e2e-flat-model rtl-flatness-replay rtl-lint rtl-slang rtl-smoke
+.PHONY: golden images model model-clean model-run rtl-clean rtl-e2e rtl-e2e-flat-model rtl-e2e-vlc-model rtl-flatness-replay rtl-lint rtl-slang rtl-smoke
 
 GOLDEN_SEED ?= 0x445343
 GOLDEN_PATTERN ?= random
@@ -52,6 +52,16 @@ rtl-e2e-flat-model: golden
 		-Wno-TIMESCALEMOD -DDSC_FLATNESS_MODEL_SUBSTITUTE \
 		--top-module tb_dsc_e2e -f tests/verilator/rtl.f \
 		tests/verilator/tb_dsc_e2e.sv tests/verilator/model/flatness_function_model.cpp
+	./obj_dir/Vtb_dsc_e2e
+
+# 用 C++ function model 替换首差异所在的 chroma ICH VLC 发射路径。
+rtl-e2e-vlc-model: golden
+	verilator --binary --timing --assert -Wall -Wno-fatal \
+		-Wno-WIDTH -Wno-UNUSED -Wno-IMPORTSTAR -Wno-PINCONNECTEMPTY \
+		-Wno-BLKSEQ -Wno-DECLFILENAME -Wno-GENUNNAMED -Wno-MULTIDRIVEN \
+		-Wno-TIMESCALEMOD -DDSC_VLC_MODEL_SUBSTITUTE \
+		--top-module tb_dsc_e2e -f tests/verilator/rtl.f \
+		tests/verilator/tb_dsc_e2e.sv tests/verilator/model/vlc_function_model.cpp
 	./obj_dir/Vtb_dsc_e2e
 
 # 用独立像素/QP function model 逐事务验证 flatness 边界，不经过预测器和码控。

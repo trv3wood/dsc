@@ -107,6 +107,8 @@ def write_flatness_replay(
         raise RuntimeError("C group trace 长度与输入图像不一致")
 
     pixel_words: list[int] = []
+    check_1_words: list[int] = []
+    check_2_words: list[int] = []
     qps: list[int] = []
     flags: list[int] = []
     for line_index in range(HEIGHT):
@@ -183,10 +185,25 @@ def write_flatness_replay(
             for lane, sample in enumerate(line_pixels[group_index * 3:group_index * 3 + 3]):
                 word |= ((sample[0] << 32) | (sample[1] << 16) | sample[2]) << (lane * 48)
             pixel_words.append(word)
+            group_start = group_index * 3
+            check_1_samples = line_pixels[group_start + 2:min(group_start + 6, WIDTH)]
+            check_2_samples = line_pixels[group_start + 3:min(group_start + 9, WIDTH)]
+            check_1_samples += [line_pixels[-1]] * (4 - len(check_1_samples))
+            check_2_samples += [line_pixels[-1]] * (6 - len(check_2_samples))
+            differences = []
+            for samples in (check_1_samples, check_2_samples):
+                differences.append(tuple(
+                    max(sample[component] for sample in samples) - min(sample[component] for sample in samples)
+                    for component in range(3)
+                ))
+            check_1_words.append((differences[0][0] << 32) | (differences[0][1] << 16) | differences[0][2])
+            check_2_words.append((differences[1][0] << 32) | (differences[1][1] << 16) | differences[1][2])
             qps.append(qp)
             flags.append(packed_flags)
 
     (generated / "flatness_pixels.hex").write_text("".join(f"{word:036x}\n" for word in pixel_words), encoding="ascii")
+    (generated / "flatness_check1.hex").write_text("".join(f"{word:012x}\n" for word in check_1_words), encoding="ascii")
+    (generated / "flatness_check2.hex").write_text("".join(f"{word:012x}\n" for word in check_2_words), encoding="ascii")
     (generated / "flatness_qp.hex").write_text("".join(f"{qp:02x}\n" for qp in qps), encoding="ascii")
     (generated / "flatness_expected.hex").write_text("".join(f"{flag:02x}\n" for flag in flags), encoding="ascii")
 

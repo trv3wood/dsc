@@ -4,8 +4,8 @@ import dsce_defs_pkg::*;
 
 module tb_dsc_flatness_replay;
     localparam int pGROUPS_PER_LINE = 32;
-    localparam int pREPLAY_LINE = 1;
-    localparam int pBASE = pREPLAY_LINE * pGROUPS_PER_LINE;
+    localparam int pLINES = 108;
+    localparam int pTOTAL_GROUPS = pLINES * pGROUPS_PER_LINE;
 
     logic dsc_clk = 1'b0;
     logic dsc_reset_n = 1'b0;
@@ -26,8 +26,13 @@ module tb_dsc_flatness_replay;
     logic [143:0] pixel_words [0:3455];
     logic [4:0] qp_words [0:3455];
     logic [7:0] expected_flags [0:3455];
+    logic [47:0] expected_check_1 [0:3455];
+    logic [47:0] expected_check_2 [0:3455];
     int output_index = 0;
+    int check_index = 0;
     int errors = 0;
+    int group_errors = 0;
+    int valid_period = 3;
 
     always #5 dsc_clk = ~dsc_clk;
 
@@ -36,31 +41,50 @@ module tb_dsc_flatness_replay;
     task automatic drive_group(input int group_index);
         @(negedge dsc_clk);
         dsc_source_valid_in = 1'b1;
-        dsc_source_last_in = group_index == pGROUPS_PER_LINE - 1;
+        dsc_source_last_in = group_index % pGROUPS_PER_LINE == pGROUPS_PER_LINE - 1;
         for (int lane = 0; lane < 3; lane++)
-            dsc_source_group_in[lane] = pixel_words[pBASE + group_index][lane * 48 +: 48];
+            dsc_source_group_in[lane] = pixel_words[group_index][lane * 48 +: 48];
         @(negedge dsc_clk);
         dsc_source_valid_in = 1'b0;
         dsc_source_last_in = 1'b0;
-        // 顶层 decision 路径每三个处理周期送一组，保留真实 valid 相位。
-        repeat (2) @(negedge dsc_clk);
+        repeat (valid_period - 1) @(negedge dsc_clk);
     endtask
 
     always @(negedge dsc_clk) begin
-        if (output_index < pGROUPS_PER_LINE)
-            dsc_primary_qp = qp_words[pBASE + output_index];
+        if (output_index < pTOTAL_GROUPS)
+            dsc_primary_qp = qp_words[output_index];
     end
 
     always @(posedge dsc_clk) begin
         #1;
+        if (dut.i_group_valid_check) begin
+            if (dut.i_group_check_diff[1] !== expected_check_1[check_index] ||
+                dut.i_group_check_diff[2] !== expected_check_2[check_index]) begin
+                $display("CHECK_MISMATCH group=%0d expected=%012x/%012x actual=%012x/%012x",
+                    check_index, expected_check_1[check_index], expected_check_2[check_index],
+                    dut.i_group_check_diff[1], dut.i_group_check_diff[2]);
+                $fatal(1, "flat_check 首个边界差异");
+            end
+            check_index++;
+        end
         if (dsc_group_valid_out) begin
-            if (dsc_vlc_flat_flags_out !== expected_flags[pBASE + output_index]) begin
+            for (int lane = 0; lane < 3; lane++) begin
+                if (dsc_group_out[lane] !== pixel_words[output_index][lane * 48 +: 48]) begin
+                    if (group_errors < 8)
+                        $display("GROUP_MISMATCH group=%0d lane=%0d expected=%012x actual=%012x",
+                            output_index, lane,
+                            pixel_words[output_index][lane * 48 +: 48],
+                            dsc_group_out[lane]);
+                    group_errors++;
+                end
+            end
+            if (dsc_vlc_flat_flags_out !== expected_flags[output_index]) begin
                 $display("FLAT_MISMATCH group=%0d qp=%0d expected=%02x actual=%02x",
-                    output_index, dsc_primary_qp, expected_flags[pBASE + output_index],
+                    output_index, dsc_primary_qp, expected_flags[output_index],
                     dsc_vlc_flat_flags_out);
                 errors++;
             end
-            if (dsc_group_last_out !== (output_index == pGROUPS_PER_LINE - 1)) begin
+            if (dsc_group_last_out !== (output_index % pGROUPS_PER_LINE == pGROUPS_PER_LINE - 1)) begin
                 $display("LAST_MISMATCH group=%0d actual=%0b", output_index, dsc_group_last_out);
                 errors++;
             end
@@ -69,9 +93,14 @@ module tb_dsc_flatness_replay;
     end
 
     initial begin
+        void'($value$plusargs("VALID_PERIOD=%d", valid_period));
+        if (valid_period < 1)
+            $fatal(1, "VALID_PERIOD 必须大于 0");
         $readmemh("tests/verilator/generated/flatness_pixels.hex", pixel_words);
         $readmemh("tests/verilator/generated/flatness_qp.hex", qp_words);
         $readmemh("tests/verilator/generated/flatness_expected.hex", expected_flags);
+        $readmemh("tests/verilator/generated/flatness_check1.hex", expected_check_1);
+        $readmemh("tests/verilator/generated/flatness_check2.hex", expected_check_2);
         dsc_source_group_in = '{default: kDSC_PIXEL_INIT};
 
         repeat (4) @(negedge dsc_clk);
@@ -87,22 +116,25 @@ module tb_dsc_flatness_replay;
         dsc_pps_update = 1'b0;
         dsc_start_of_slice = 1'b0;
 
-        for (int group_index = 0; group_index < pGROUPS_PER_LINE; group_index++)
-            drive_group(group_index);
+        for (int line_index = 0; line_index < pLINES; line_index++) begin
+            for (int group_index = 0; group_index < pGROUPS_PER_LINE; group_index++)
+                drive_group(line_index * pGROUPS_PER_LINE + group_index);
+            wait (output_index == (line_index + 1) * pGROUPS_PER_LINE);
+        end
         @(negedge dsc_clk);
         dsc_source_valid_in = 1'b0;
         dsc_source_last_in = 1'b0;
 
         repeat (100) begin
             @(negedge dsc_clk);
-            if (output_index == pGROUPS_PER_LINE) begin
-                if (errors == 0)
+            if (output_index == pTOTAL_GROUPS) begin
+                if (errors == 0 && group_errors == 0)
                     $display("PASS: flatness replay 逐事务比对通过，共 %0d groups", output_index);
                 else
-                    $fatal(1, "flatness replay 失败，共 %0d 处差异", errors);
+                    $fatal(1, "flatness replay 失败，flags=%0d groups=%0d", errors, group_errors);
                 $finish;
             end
         end
-        $fatal(1, "flatness replay 超时，只输出 %0d/%0d groups", output_index, pGROUPS_PER_LINE);
+        $fatal(1, "flatness replay 超时，只输出 %0d/%0d groups", output_index, pTOTAL_GROUPS);
     end
 endmodule

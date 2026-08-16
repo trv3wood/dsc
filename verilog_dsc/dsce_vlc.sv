@@ -25,6 +25,14 @@
 // ----------------------------------------------
 import dsce_defs_pkg::*;
 
+`ifdef DSC_VLC_MODEL_SUBSTITUTE
+import "DPI-C" function int dsc_vlc_ich_chroma_fragment_model(
+    input int phase,
+    input int ich_selected,
+    input int ich_index
+);
+`endif
+
 
 // ----------------------------------------------
 //  entity declaration
@@ -406,6 +414,22 @@ module dsce_vlc
                     dsc_vlc_data_out <= 16'h0000;
                 end // default
             endcase
+
+`ifdef DSC_VLC_MODEL_SUBSTITUTE
+            // C function model 仅替换当前首差异所在的 chroma ICH 发射路径。
+            // packed result: valid[21], size[20:16], data[15:0]。
+            if (pCOLOR_SELECT != 0 &&
+                ((i_pipeline_state == 4'b0001 && dsc_ich_selected_in) ||
+                 (i_pipeline_state != 4'b0001 && i_ich_selected_in))) begin
+                logic [31:0] model_fragment;
+                model_fragment = dsc_vlc_ich_chroma_fragment_model(
+                    i_pipeline_state, 1, i_ich_index_in);
+                dsc_vlc_valid_out <= model_fragment[21];
+                dsc_vlc_size_out <= model_fragment[20:16];
+                dsc_vlc_data_out <= model_fragment[15:0];
+                dsc_vlc_last_out <= model_fragment[21] && i_pipe_last[1];
+            end
+`endif
 
         end // if
     end : VLC
