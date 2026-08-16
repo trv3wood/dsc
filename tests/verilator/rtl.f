@@ -40,4 +40,5 @@ verilog_dsc/dsce_stream_builder.sv
 verilog_dsc/dsce_stream_fifo.sv
 verilog_dsc/dsce_timers.sv
 verilog_dsc/dsce_vlc.sv
+verilog_dsc/dsce_vlc_function_model.sv
 verilog_dsc/dsc_encoder.sv

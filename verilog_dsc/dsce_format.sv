@@ -116,7 +116,11 @@ module dsce_format
         // ---------------------------------------------
         //  vlc mapping
         // ---------------------------------------------
+`ifdef DSC_VLC_MODEL_SUBSTITUTE
+        dsce_vlc_function_model
+`else
         dsce_vlc
+`endif
         #(
             .pCOLOR_SELECT    (mx)
         )  dsce_vlc_inst

@@ -72,16 +72,19 @@ last 被 stage 3 清零覆盖、提前 flush 以及 `group_flatness_type` 使用
 
 ### VLC function-model 替换
 
-`make rtl-e2e-vlc-model GOLDEN_PATTERN=flatness` 通过 DPI 用输入驱动的 C++ function
-model 选择性替换 `dsce_vlc` 的 chroma ICH 发射路径。C reference model 对 unit 1/2
-只发送一个 5-bit history index；原 RTL 先产生额外的零长度 prefix 事务。修正 adapter
-的当前组/已寄存 ICH 相位后，SSP1/2 从 fragment 36 开始的早期差异消失，构成该
-VLC 子路径有缺陷的 A/B 证据。
+`make rtl-e2e-vlc-model GOLDEN_PATTERN=flatness GOLDEN_SEED=0x445343` 在
+`dsce_format.gen_vlc` 的实例边界，将三个完整 `dsce_vlc` 替换为端口等价的
+`dsce_vlc_function_model`。原 RTL 内部不含 DPI override。SystemVerilog adapter 只负责
+打包公开输入和寄存输出；C++ 模型独立维护 `previous_qlevel`、`previous_ich`、
+`predicted_size`、supergroup index 和 fragment 队列，并同时生成 VLC、coded-unit-size
+及 RC-size 全部输出。默认构建仍实例化真实 RTL。
 
-替换后整机仍在 payload byte 113 首差异，下一内部差异位于 luma ICH fragment 顺序：
-C model 的边界序列为 5-bit index 与 1-bit prefix 的既定事务顺序，RTL 顺序相反。
-因此下一步应把 function model 扩展到 luma ICH，再运行整机替换；通过后才修改真实
-`dsce_vlc`。当前 syntax FIFO overflow 仍存在，不能宣称完整功能通过。
+黑盒模型修正 valid 低时保持 size 寄存器的边界语义后，前四组 coded/RC size
+恢复为 `105/81`、`82/81`、`82/81`、`78/72`，与基线一致。完整替换消除了
+早期 ICH 调度差异和 FIFO overflow，将可信首差异稳定到 SSP0 fragment 94
+(`010001`/`010000`) 及 payload byte 152 (`a9`/`29`)。最终仅输出
+9354/15552 bytes 并超时，因此不能宣称端到端通过。下一步应捕获完整
+`dsce_vlc` 公开输入的逐 group replay，区分 flatness 事务关联错误与模型算法错误。
 
 ## 仿真假设
 
