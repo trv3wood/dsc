@@ -253,9 +253,9 @@ module dsce_flat_flags
 
                     dsc_vlc_flat_flags_out.group_flatness_type <=
                         (i_current_first_flat_valid && i_output_supergroup_index == i_current_first_flat) ?
-                        (i_current_flatness_type ? 2'd2 : 2'd1) : 2'd0;
+                        (i_current_flatness_type ? kDSC_VERY_FLAT : kDSC_SOMEWHAT_FLAT) : kDSC_NOT_FLAT;
                     if (i_dsc_version_2_active && i_flush_count == 3'd1)
-                        dsc_vlc_flat_flags_out.group_flatness_type <= 2'd2;
+                        dsc_vlc_flat_flags_out.group_flatness_type <= kDSC_VERY_FLAT;
 
                     if (i_output_supergroup_index == 2'd0 && i_current_first_flat_valid) begin
                         dsc_vlc_flat_flags_out.send_flatness <= 1'b1;

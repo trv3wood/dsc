@@ -52,6 +52,25 @@ payload 差异位于 byte 256，期望 `15`、实际 `16`；RTL 输出 15024 byt
 RTL 运行端到端、多 seed 和随机 backpressure 回归。禁止以 golden 数据注入作为最终
 实现。
 
+### Flatness 子模块 replay
+
+`make rtl-flatness-replay` 使用 `flatness` 图案单独实例化 `dsce_flatness`。生成器按
+RTL 相同的 RGB→YCoCg 变换，从原始像素和 C model 边界 QP 独立计算 4/6 像素窗口、
+flatness 状态及期望 flags；C group trace 只交叉检查坐标和状态移植，不作为 DUT 输入。
+QP 按输出事务序号驱动，输入 valid 每三个处理周期出现一次。该 adapter 不经过预测器、
+码控、VLC 或绝对周期 golden 注入。
+
+固定 seed `0x445343` 的 line 1 replay 当前预期失败，共有 6 个 flag 事务差异：期望在
+group 3 输出 `next_flatness_flag=1`、group 4 输出 flatness 描述及 group 7 标记 very-flat；
+RTL 对应事务延迟到 group 7/8，随后 group 11/12 状态也错误。首差异为 group 3、QP 4，
+期望 packed flags `0x80`，实际 `0x00`。这说明首个未解决问题位于
+`dsce_flat_check → dsce_flat_flags` 的 look-ahead 数据/valid 对齐，而不是 VLC packing。
+
+replay 还确认 `group_flatness_type` 原来使用 `1/2`，与包中
+`kDSC_SOMEWHAT_FLAT=2`、`kDSC_VERY_FLAT=3` 不符；RTL 已改为使用命名常量。该修复尚未
+使 replay 或端到端对拍通过。下一步应记录每个 `dsc_check_diff_in` 对应的源 group，修复
+晚一个 supergroup 的检测，再恢复真实 RTL 运行 replay 和端到端回归。
+
 ## 仿真假设
 
 原始 RTL 包不含 `gprim_sync_stage`、`gprim_sync2_stage` 和 `gram_bist_1r1w`。`support/` 提供仅用于仿真的模型：同步器保留一拍/两拍延迟，RAM 使用同步读写，BIST 不建模。这些模型不能替代工艺库 CDC、冲突语义或 BIST 签核。

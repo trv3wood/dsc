@@ -79,6 +79,118 @@ def write_pixels(path: Path, pixels: list[tuple[int, int, int]]) -> None:
             output.write(f"{word:048x}\n")
 
 
+def rgb_to_ycocg(pixel: tuple[int, int, int]) -> tuple[int, int, int]:
+    """与 dsce_convert 的 8bpc 可逆 RGB->YCoCg 变换保持一致。"""
+    red, green, blue = pixel
+    co = red - blue
+    temporary = blue + (co >> 1)
+    cg = green - temporary
+    return temporary + (cg >> 1), co + 256, cg + 256
+
+
+def write_flatness_replay(
+    generated: Path,
+    pixels: list[tuple[int, int, int]],
+    group_trace: Path,
+) -> None:
+    """生成独立 flatness function model 的逐组 replay 向量。"""
+    groups_per_line = WIDTH // 3
+    converted = [rgb_to_ycocg(pixel) for pixel in pixels]
+    trace_rows = []
+    for line in group_trace.read_text(encoding="ascii").splitlines():
+        fields = dict(field.split("=", 1) for field in line.split())
+        trace_rows.append({name: int(value) for name, value in fields.items() if name in {
+            "line", "group", "qp", "first_flat", "flat_type", "orig_flat", "next_first_flat"
+        }})
+
+    if len(trace_rows) != HEIGHT * groups_per_line:
+        raise RuntimeError("C group trace 长度与输入图像不一致")
+
+    pixel_words: list[int] = []
+    qps: list[int] = []
+    flags: list[int] = []
+    for line_index in range(HEIGHT):
+        line_pixels = converted[line_index * WIDTH:(line_index + 1) * WIDTH]
+        first_flat = -1
+        flatness_type = 0
+        previous_first_flat = -1
+        previous_flatness_type = 0
+        previous_is_flat = False
+
+        def flatness_at(position: int, qp: int) -> int:
+            if position + 1 >= WIDTH:
+                return 0
+            adjusted_qp = max(qp - 4, 0)
+            qlevel_y = (0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 5, 6, 7)[adjusted_qp]
+            qlevel_c = (0, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 8, 8, 8)[adjusted_qp]
+            thresholds = (max(2, 1 << qlevel_y), max(2, 1 << qlevel_c), max(2, 1 << qlevel_c))
+            for start, end in ((0, 4), (1, 7)):
+                if start == 1 and position + 2 >= WIDTH:
+                    return 0
+                samples = line_pixels[position + start:min(position + end, WIDTH)]
+                differences = tuple(max(sample[c] for sample in samples) - min(sample[c] for sample in samples) for c in range(3))
+                if all(difference <= 2 for difference in differences):
+                    return 2
+                if all(difference <= thresholds[c] for c, difference in enumerate(differences)):
+                    return 1
+            return 0
+
+        for group_index in range(groups_per_line):
+            row = trace_rows[line_index * groups_per_line + group_index]
+            qp = row["qp"]
+            hpos = group_index * 3 + 2
+            if group_index % 4 == 3:
+                previous_is_flat = first_flat >= 0
+                previous_first_flat = -1
+                if 3 <= qp <= 12:
+                    for candidate in range(4):
+                        candidate_type = flatness_at(hpos + (candidate + 1) * 3, qp)
+                        if not previous_is_flat and candidate_type:
+                            previous_first_flat = candidate
+                            previous_flatness_type = candidate_type - 1
+                            break
+                        previous_is_flat = bool(candidate_type)
+            elif group_index % 4 == 0:
+                first_flat = previous_first_flat
+                flatness_type = previous_flatness_type
+
+            original_flat = first_flat >= 0 and group_index % 4 == first_flat
+            if group_index == groups_per_line - 1:
+                original_flat = True
+                flatness_type = 1
+
+            # packed tDSC_FLAT_FLAGS: next, send, first[1:0], type, group_type[1:0], ICH
+            next_flag = group_index % 4 == 3 and previous_first_flat >= 0
+            send = group_index % 4 == 0 and first_flat >= 0
+            group_type = (flatness_type + 2) if original_flat else 0
+            packed_flags = (next_flag << 7) | (send << 6) | (group_type << 1)
+            if send:
+                packed_flags |= (first_flat << 4) | (flatness_type << 3)
+
+            # 用 C trace 交叉验证模型移植，但 replay 期望来自上面的独立算法。
+            # VLC 编码 group 0 时会清除 C state.flatnessType，故该字段不能作为
+            # 检测模型的边界 oracle；其余状态仍可用于坐标和状态机交叉检查。
+            if (first_flat, int(original_flat), previous_first_flat) != (
+                row["first_flat"], row["orig_flat"], row["next_first_flat"]
+            ):
+                raise RuntimeError(
+                    f"flatness model 与 C trace 不一致: line={line_index} group={group_index} "
+                    f"model={(first_flat, int(original_flat), previous_first_flat)} "
+                    f"c={(row['first_flat'], row['orig_flat'], row['next_first_flat'])}"
+                )
+
+            word = 0
+            for lane, sample in enumerate(line_pixels[group_index * 3:group_index * 3 + 3]):
+                word |= ((sample[0] << 32) | (sample[1] << 16) | sample[2]) << (lane * 48)
+            pixel_words.append(word)
+            qps.append(qp)
+            flags.append(packed_flags)
+
+    (generated / "flatness_pixels.hex").write_text("".join(f"{word:036x}\n" for word in pixel_words), encoding="ascii")
+    (generated / "flatness_qp.hex").write_text("".join(f"{qp:02x}\n" for qp in qps), encoding="ascii")
+    (generated / "flatness_expected.hex").write_text("".join(f"{flag:02x}\n" for flag in flags), encoding="ascii")
+
+
 def write_hex(path: Path, data: bytes) -> None:
     path.write_text("".join(f"{value:02x}\n" for value in data), encoding="ascii")
 
@@ -164,6 +276,7 @@ def main() -> None:
         env=model_environment,
         check=True,
     )
+    write_flatness_replay(generated, pixels, group_trace)
     muxword_counts = split_mux_trace(mux_trace, generated)
     vlc_counts = split_vlc_trace(vlc_trace, generated)
 
