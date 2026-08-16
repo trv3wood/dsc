@@ -91,19 +91,23 @@ module dsce_slice
     tDSC_PIXEL                  i_prev_line_mmap [5:0];
     tDSC_PIXEL                  i_prev_line_ich [6:0];
 
-    logic                       i_valid_rc;
+    logic                       i_valid_rc, i_valid_rc_next;
     tDSC_QLEVEL                 i_qlevel_y, i_qlevel_y_res;
     tDSC_QLEVEL                 i_qlevel_c, i_qlevel_c_res;
     logic                       i_force_mpp;
 
-    tDSC_QLEVEL                 i_rc_primary_qp, i_rc_prev_qp;
+    tDSC_QLEVEL                 i_rc_primary_qp, i_rc_primary_qp_next, i_rc_prev_qp;
     tDSC_QLEVEL                 i_primary_qp, i_primary_qp_res, i_prev_qp;
 
     logic                       i_valid_fd;
     logic                       i_last_fd;
     tDSC_PIXEL                  i_group_fd [2:0];
     tDSC_FLAT_FLAGS             i_vlc_flat_flags_fd;
-    tDSC_FLAT_FLAGS             i_vlc_flat_flags_pipe [3:1];
+    tDSC_FLAT_FLAGS             i_vlc_flat_flags_fifo [7:0];
+    tDSC_FLAT_FLAGS             i_vlc_flat_flags_aligned;
+    logic [2:0]                 i_flat_flags_write_ptr;
+    logic [2:0]                 i_flat_flags_read_ptr;
+    logic [3:0]                 i_flat_flags_count;
     logic                       i_ich_next_is_very_flat;
 
     logic                       i_valid_pd;
@@ -140,12 +144,38 @@ module dsce_slice
         cfg_slice_status.slice_overflow = i_slice_buffer_overflow;
     end : SignalMap
 
-    // flatness flags 与三拍 prediction pipeline 对齐。
-    always_ff @(posedge dsc_clk or negedge dsc_reset_n) begin : FlatnessPipeline
-        if (!dsc_reset_n)
-            i_vlc_flat_flags_pipe <= '{default: kDSC_FLAT_FLAGS_INIT};
-        else
-            i_vlc_flat_flags_pipe <= {i_vlc_flat_flags_pipe[2:1], i_vlc_flat_flags_fd};
+    // 用 valid 事务对齐 flatness 与 prediction，不依赖 group 间的固定空拍数。
+    assign i_vlc_flat_flags_aligned = i_vlc_flat_flags_fifo[i_flat_flags_read_ptr];
+
+    always_ff @(posedge dsc_clk or negedge dsc_reset_n) begin : FlatnessTransactionFifo
+        if (!dsc_reset_n) begin
+            i_vlc_flat_flags_fifo <= '{default: kDSC_FLAT_FLAGS_INIT};
+            i_flat_flags_write_ptr <= 3'd0;
+            i_flat_flags_read_ptr <= 3'd0;
+            i_flat_flags_count <= 4'd0;
+        end else if (i_start_of_slice_slb) begin
+            i_flat_flags_write_ptr <= 3'd0;
+            i_flat_flags_read_ptr <= 3'd0;
+            i_flat_flags_count <= 4'd0;
+        end else begin
+            if (i_valid_fd) begin
+                i_vlc_flat_flags_fifo[i_flat_flags_write_ptr] <= i_vlc_flat_flags_fd;
+                i_flat_flags_write_ptr <= i_flat_flags_write_ptr + 3'd1;
+            end
+            if (i_valid_pd)
+                i_flat_flags_read_ptr <= i_flat_flags_read_ptr + 3'd1;
+
+            case ({i_valid_fd, i_valid_pd})
+                2'b10: i_flat_flags_count <= i_flat_flags_count + 4'd1;
+                2'b01: i_flat_flags_count <= i_flat_flags_count - 4'd1;
+                default: i_flat_flags_count <= i_flat_flags_count;
+            endcase
+
+            assert (!i_valid_fd || i_flat_flags_count < 4'd8)
+                else $error("Flatness transaction FIFO overflow");
+            assert (!i_valid_pd || i_flat_flags_count != 4'd0)
+                else $error("Flatness transaction FIFO underflow");
+        end
     end
 
 
@@ -401,6 +431,8 @@ module dsce_slice
         .dsc_group_last_in          (i_last_fd),
         // rate control qp input
         .dsc_rc_primary_qp_in       (i_rc_primary_qp),
+        .dsc_rc_qp_valid_in         (i_valid_rc_next),
+        .dsc_rc_primary_qp_next_in  (i_rc_primary_qp_next),
         .dsc_rc_prev_qp_in          (i_rc_prev_qp),
         // rate control modified qp out
         .dsc_primary_qp_out         (i_primary_qp),
@@ -431,10 +463,12 @@ module dsce_slice
         .dsc_use_mpp                (i_mpp_dec),
         .dsc_ich_selected           (i_ich_selected_dec),
         .dsc_vlc_size               (i_vlc_size_dec),
-        .dsc_flatness_flag          (i_vlc_flat_flags_pipe[3].group_flatness_type != 2'd0),
+        .dsc_flatness_flag          (i_vlc_flat_flags_aligned.group_flatness_type != 2'd0),
         // primary quant level
         .dsc_qp_valid_out           (i_valid_rc),
+        .dsc_qp_valid_next          (i_valid_rc_next),
         .dsc_primary_qp             (i_rc_primary_qp),
+        .dsc_primary_qp_next        (i_rc_primary_qp_next),
         .dsc_prev_qp                (i_rc_prev_qp),
         .dsc_force_mpp              (i_force_mpp)
     );
@@ -487,7 +521,7 @@ module dsce_slice
         .dsc_primary_qp_in          (i_primary_qp_res),
         .dsc_qlevel_y_in            (i_qlevel_y_res),
         .dsc_qlevel_c_in            (i_qlevel_c_res),
-        .dsc_flatness_in            (i_vlc_flat_flags_pipe[3]),
+        .dsc_flatness_in            (i_vlc_flat_flags_aligned),
         // residual input
         .dsc_ich_selected_in        (i_ich_selected_dec),
         .dsc_ich_index_in           (i_index_ich),

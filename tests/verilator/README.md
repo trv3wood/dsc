@@ -86,6 +86,29 @@ last 被 stage 3 清零覆盖、提前 flush 以及 `group_flatness_type` 使用
 9354/15552 bytes 并超时，因此不能宣称端到端通过。下一步应捕获完整
 `dsce_vlc` 公开输入的逐 group replay，区分 flatness 事务关联错误与模型算法错误。
 
+### VLC replay 与 QP 反馈边界
+
+`make rtl-vlc-capture` 从真实顶层捕获 96 个 `dsce_vlc` 公开输入事务；
+`make rtl-vlc-replay` 用同一 trace 并行驱动三个完整 RTL VLC 和三个完整 function
+model。trace 不含 golden 输出。初始逐 fragment 比较显示 RTL 色度在 fragment 36
+出现 `size=0` 事务，而 C model 的 `AddBits(0)` 不产生 fragment；禁止该事务会破坏
+formatter 的 group 节拍并导致 syntax FIFO overflow，因此它不是可删除的普通空输出，
+replay 后续必须按有效 bitstream 而非 fragment 数量比较。luma fragment 94 同样是 RTL
+把 C model 的 1-bit 与 2-bit 片段合并为一个 3-bit 片段，不能据此归因算法错误。
+
+顶层边界检查发现 flatness group 35 需要的 QP=4 与 `dsce_rate` 的寄存输出在同一沿
+提交，`dsce_flat_flags` 在沿前只能看到旧 QP=0。`dsce_rate.i_st_qp` 和
+`i_valid_pipe[2]` 在沿前已经稳定，因此现显式导出 `dsc_primary_qp_next` 与
+`dsc_qp_valid_next`，由 `dsce_rate_adjust` 成对选择。修复后前 48 个顶层 flatness
+源端及 prediction 对齐端事务全部匹配 golden。曾尝试给 flatness 增加两级 pending
+延迟，但延迟会沿 rate-feedback 环传播并改变吞吐；该实验已撤回，原 flatness 时序配合
+next-QP 即可通过边界检查。
+
+当前全 RTL 在 byte 113 首次失配，随后真实 VLC 路径触发 syntax FIFO overflow；完整
+VLC 替换不会在该点 overflow，但仍在 byte 172 起失配并最终超时。强证据因此把下一步
+定位在 VLC 的无 ready 四拍调度/formatter 契约及 function model 尚未覆盖的共同输入
+状态，而不是 flatness 算法或 support RAM。最终修复仍须恢复真实 VLC 并通过端到端。
+
 ## 仿真假设
 
 原始 RTL 包不含 `gprim_sync_stage`、`gprim_sync2_stage` 和 `gram_bist_1r1w`。`support/` 提供仅用于仿真的模型：同步器保留一拍/两拍延迟，RAM 使用同步读写，BIST 不建模。这些模型不能替代工艺库 CDC、冲突语义或 BIST 签核。

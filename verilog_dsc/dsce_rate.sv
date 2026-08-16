@@ -54,7 +54,9 @@ module dsce_rate
 
     // primary quant level
     output logic            dsc_qp_valid_out,       // primary qp valid output
+    output logic            dsc_qp_valid_next,      // 本拍将提交的 qp valid
     output tDSC_QLEVEL      dsc_primary_qp,         // primary quant level
+    output tDSC_QLEVEL      dsc_primary_qp_next,    // 本拍将提交的 primary qp
     output tDSC_QLEVEL      dsc_prev_qp,            // previous qp out,
     output logic            dsc_force_mpp           // force MPP mode
 );
@@ -261,6 +263,9 @@ module dsce_rate
     // ------------------------------------------------------------------------------------------------------------
 
     // signal assignments
+    assign dsc_qp_valid_next = i_valid_pipe[2];
+    assign dsc_primary_qp_next = i_st_qp;
+
     always_comb begin : SignalMap
         dsc_prev_qp = i_prev_qp;
         i_pc_decrement = (i_line_pixels[15:2] == 14'd0) ? {8'h00, i_line_pixels[1:0]} : 10'd3;
@@ -961,4 +966,3 @@ module dsce_rate
     end : ParameterBuffer
 
 endmodule : dsce_rate
-

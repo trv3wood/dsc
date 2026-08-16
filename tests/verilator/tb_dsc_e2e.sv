@@ -45,6 +45,9 @@ module tb_dsc_e2e;
     logic [20:0]  expected_ssp0_vlc [0:16383];
     logic [20:0]  expected_ssp1_vlc [0:16383];
     logic [20:0]  expected_ssp2_vlc [0:16383];
+    logic [7:0]   expected_flatness_flags [0:3455];
+    logic [4:0]   expected_flatness_qp [0:3455];
+    logic [143:0] expected_flatness_pixels [0:3455];
     int           output_count = 0;
     int           mismatch_count = 0;
     int           mux_output_count = 0;
@@ -74,6 +77,58 @@ module tb_dsc_e2e;
     int           decision_group = 0;
     int           rate_group = 0;
     int           flat_adjust_group = 0;
+    int           flatness_source_group = 0;
+    int           flatness_aligned_group = 0;
+    int           rate_qp_group = 0;
+
+`ifdef DSC_VLC_CAPTURE
+    integer       vlc_capture_file;
+    int           vlc_capture_count = 0;
+
+    initial begin
+        vlc_capture_file = $fopen("tests/verilator/generated/vlc_input_trace.hex", "w");
+        if (vlc_capture_file == 0)
+            $fatal(1, "无法创建 VLC 输入 trace");
+    end
+
+    always @(posedge dsc_clk) begin : VlcInputCapture
+        if (async_reset_n &&
+            dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_valid_pd) begin
+            $fwrite(vlc_capture_file, "%064x\n", {
+                33'd0,
+                dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_last_pd,
+                dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_primary_qp_res,
+                dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_qlevel_y_res,
+                dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_qlevel_c_res,
+                dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_ich_selected_dec,
+                dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_vlc_flat_flags_aligned,
+                dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_size_dec[0],
+                dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_size_dec[1],
+                dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_size_dec[2],
+                dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_vlc_size_dec[0],
+                dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_vlc_size_dec[1],
+                dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_vlc_size_dec[2],
+                dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_index_ich[0],
+                dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_index_ich[1],
+                dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_index_ich[2],
+                dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[0].res_y,
+                dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[1].res_y,
+                dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[2].res_y,
+                dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[0].res_co,
+                dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[1].res_co,
+                dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[2].res_co,
+                dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[0].res_cg,
+                dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[1].res_cg,
+                dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[2].res_cg});
+            vlc_capture_count++;
+            if (vlc_capture_count == 95) begin
+                $fclose(vlc_capture_file);
+                $display("VLC_CAPTURE groups=96");
+                $finish;
+            end
+        end
+    end
+`endif
 
     always #5 apb_clk = ~apb_clk;
     always #4 axi_clk = ~axi_clk;
@@ -173,6 +228,45 @@ module tb_dsc_e2e;
     end
 
     always @(posedge dsc_clk) begin : DSCStageCounters
+        if (dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_valid_rc) begin
+            if (rate_qp_group < 48)
+                $display("RATE_QP group=%0d rc_qp=%0d rc_prev=%0d",
+                         rate_qp_group,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_rc_primary_qp,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_rc_prev_qp);
+            rate_qp_group++;
+        end
+        if (dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_valid_fd) begin
+            if ({dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_group_fd[2],
+                 dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_group_fd[1],
+                 dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_group_fd[0]} !==
+                expected_flatness_pixels[flatness_source_group] && flatness_source_group < 48)
+                $display("FLAT_SOURCE_PIXEL_MISMATCH group=%0d", flatness_source_group);
+            if (flatness_source_group < 48 &&
+                dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_vlc_flat_flags_fd !==
+                expected_flatness_flags[flatness_source_group])
+                $display("FLAT_SOURCE_MISMATCH group=%0d qp_expected=%0d qp_actual=%0d expected=%02x actual=%02x idx=%0d perform=%0b cand=%0d/%0d/%0d/%0d",
+                         flatness_source_group, expected_flatness_qp[flatness_source_group],
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_primary_qp,
+                         expected_flatness_flags[flatness_source_group],
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_vlc_flat_flags_fd,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_flatness_inst.dsce_flat_flags_inst.i_output_supergroup_index,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_flatness_inst.dsce_flat_flags_inst.i_perform_flatness_check,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_flatness_inst.dsce_flat_flags_inst.i_candidate_type[0],
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_flatness_inst.dsce_flat_flags_inst.i_candidate_type[1],
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_flatness_inst.dsce_flat_flags_inst.i_candidate_type[2],
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_flatness_inst.dsce_flat_flags_inst.i_candidate_type[3]);
+            flatness_source_group++;
+        end
+        if (dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_valid_pd) begin
+            if (flatness_aligned_group < 48 &&
+                dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_vlc_flat_flags_aligned !==
+                expected_flatness_flags[flatness_aligned_group])
+                $display("FLAT_ALIGNED_MISMATCH group=%0d expected=%02x actual=%02x",
+                         flatness_aligned_group, expected_flatness_flags[flatness_aligned_group],
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_vlc_flat_flags_aligned);
+            flatness_aligned_group++;
+        end
         if (dut.dsc_pps_update)
             dsc_pps_update_count++;
         if (dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_slice_buffer_inst.i_dsc_write_ready)
@@ -346,6 +440,9 @@ module tb_dsc_e2e;
         $readmemh("tests/verilator/generated/expected_ssp0_vlc.hex", expected_ssp0_vlc);
         $readmemh("tests/verilator/generated/expected_ssp1_vlc.hex", expected_ssp1_vlc);
         $readmemh("tests/verilator/generated/expected_ssp2_vlc.hex", expected_ssp2_vlc);
+        $readmemh("tests/verilator/generated/flatness_expected.hex", expected_flatness_flags);
+        $readmemh("tests/verilator/generated/flatness_qp.hex", expected_flatness_qp);
+        $readmemh("tests/verilator/generated/flatness_pixels.hex", expected_flatness_pixels);
         for (int index = 0; index < kSPC*4+2; index++)
             bist_sram_in[index] = 12'h000;
 

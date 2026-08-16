@@ -52,6 +52,8 @@ module dsce_rate_adjust
 
     // rate control qp input
     input  tDSC_QLEVEL          dsc_rc_primary_qp_in,           // primary qp input
+    input  logic                dsc_rc_qp_valid_in,             // next primary qp valid
+    input  tDSC_QLEVEL          dsc_rc_primary_qp_next_in,      // pre-register primary qp
     input  tDSC_QLEVEL          dsc_rc_prev_qp_in,              // previous qp value
 
     // rate control modified qp out
@@ -69,6 +71,7 @@ module dsce_rate_adjust
     tDSC_QLEVEL                 i_adjusted_qp;
     tDSC_QLEVEL                 i_last_used_qp_in_slice_line;
     logic   [2:0]               i_valid_pipe, i_last_pipe;
+    tDSC_QLEVEL                 i_rc_primary_qp_effective;
 
 
     // ------------------------------------------------------------------------------------------------------------
@@ -79,6 +82,9 @@ module dsce_rate_adjust
     //  combinatorial logic
     // --------------------------------------------------------------------------
     always_comb begin : CombLogic
+        // rate 的 short-term 结果在提交沿之前已经组合稳定；flatness 同拍消费该事务。
+        i_rc_primary_qp_effective = dsc_rc_qp_valid_in ?
+                                     dsc_rc_primary_qp_next_in : dsc_rc_primary_qp_in;
         // ----- determine the end of line adjusted Qp ----- //
 `ifdef DSC_FLATNESS_MODEL_SUBSTITUTE
         i_adjusted_qp = tDSC_QLEVEL'(dsc_flatness_adjust_qp_model(
@@ -96,7 +102,7 @@ module dsce_rate_adjust
             dsc_primary_qp_out = i_adjusted_qp;
             dsc_prev_qp_out = i_adjusted_qp;
         end else begin
-            dsc_primary_qp_out = dsc_rc_primary_qp_in;
+            dsc_primary_qp_out = i_rc_primary_qp_effective;
             dsc_prev_qp_out = dsc_rc_prev_qp_in;
         end // if
     end : CombLogic
@@ -126,7 +132,7 @@ module dsce_rate_adjust
 
             // ----- record the last Qp used in the slice for the decision ----- //
             if (dsc_group_valid_in == 1'b1 && dsc_group_last_in == 1'b1) begin
-                i_last_used_qp_in_slice_line <= dsc_rc_primary_qp_in;
+                i_last_used_qp_in_slice_line <= i_rc_primary_qp_effective;
             end // if
 
             // ----- pipeline the enable for proper stage timing ----- //
