@@ -154,6 +154,35 @@ byte 2255。真实 MPP 改为在 valid 当拍锁存计算结果并随 valid 流�
 已消除旧实验中的 overflow；真实 VLC 禁止零长度 valid 后也推进到 byte 2849，确认该
 边界语义修复。当前下一目标是完整替换 `dsce_ich`，验证并递归定位 group 504 误选。
 
+### ICH function model、码控与 muxword 链路
+
+在 BP+ICH 完整替换基线上验证并修复了五个独立缺陷，`make rtl-e2e-bp-ich-model`
+现对 seed `0x445343` 端到端 PASS（15552 bytes 逐字节一致，SSP muxword 0 失配）。
+
+1. **ICH function model 的 `ceil_log2` 位宽语义**。C model (`dsc_utils.c`) 返回
+   二进制位宽（精确 2 的幂如 8 返回 4），function model 用数学上界（8→3）少 1。
+   该 bug 使 group 591（`maxIchError=35/8/54`）的 `log_ich` 算成 15 而非 16，
+   `cost_ich=76` 误判小于 `cost_p=79` 而选错 ICH。这是模型 bug，不是 RTL。
+2. **`dsce_rate` bit-save 分支缺少 min_qp 下界**。DSC 1.2 行尾连续 all-MPP 触发
+   `bitsave_mode==2` 时，C model 先 `stQp=prevQp+2` 再统一 `CLAMP(stQp, min, max)`；
+   RTL 的 `7'b????100` 分支只做上界 `dsce_min_qp(current+2, adj_max)`，在
+   prevQp=1、min_qp=5 时输出 3 而非 5。修复为 `dsce_clamp_qp(..., min, adj_max)`。
+3. **`dsce_muxword` 丢弃 size>=10 的片段**。RTL luma 把 C 的 1+4+5 位片段合并为
+   单个 10 位片段（C model 无 size>=10 的 luma 片段），而两个 case 只处理移位量
+   1-9，`default` 丢弃数据，首差异在 bit 6833（muxword word 142）。扩展到 16。
+4. **muxword slice 结束不发射尾部部分字**。最后一行部分字（45 位）留在 buffer 里
+   未被 flush，且直接 byte-swap 的部分字填充位在头部、与 reference shifter 语义
+   相反。新增 `dsc_slice_last_in`（dsce_format 按行尾计数检测最后一行），把部分字
+   左移对齐到高 48 位后按整字字节序输出；余量同理。
+5. **`dsce_format_buffer` 缺少最后 chunk 的零填充**。输出停在 2583 个 muxword
+   （15498 字节），与 chunk_size×slice_height=15552 相差 54 字节。新增目标字数
+   同步与 `kRS_DATA_PAD` 状态，AXI 域写计数稳定 64 拍判定编码完成后再补零。
+
+完整 RTL（不替换任何子模块）首差异仍锁定在全局 group 37，由 `dsce_bpvector`
+无条件清零 `dsc_use_bp` 且未接入预测器所致；在真实 RTL 实现 BP search/predict
+之前，`rtl-e2e-bp-model` 系基线仍是可信上游。修复 BP 后应恢复真实 ICH 与 VLC，
+再跑端到端、flatness replay 和多 seed 回归。
+
 ## 仿真假设
 
 原始 RTL 包不含 `gprim_sync_stage`、`gprim_sync2_stage` 和 `gram_bist_1r1w`。`support/` 提供仅用于仿真的模型：同步器保留一拍/两拍延迟，RAM 使用同步读写，BIST 不建模。这些模型不能替代工艺库 CDC、冲突语义或 BIST 签核。
