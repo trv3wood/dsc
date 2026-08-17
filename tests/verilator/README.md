@@ -26,6 +26,9 @@ payload 差异位于 byte 256，期望 `15`、实际 `16`；RTL 输出 15024 byt
 
 ## 缺陷定位记录
 
+从早期基线 `4b1ebbc` 到 HEAD 的完整 RTL 修复清单见
+[`rtl_fix_log.md`](rtl_fix_log.md)。
+
 固定配置为 96×108、RGB 8bpc、12bpp、seed `0x445343`。C model 通过环境变量
 `DSC_GROUP_TRACE`、`DSC_RATE_TRACE`、`DSC_VLC_TRACE` 和 `DSC_MUX_TRACE` 输出边界
 事务；golden 生成器将三路 SSP muxword/VLC trace 转换成 RTL testbench 可直接比较
