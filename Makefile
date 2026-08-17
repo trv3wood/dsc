@@ -1,8 +1,9 @@
-.PHONY: golden images model model-clean model-run rtl-clean rtl-e2e rtl-e2e-flat-model rtl-e2e-vlc-model rtl-e2e-bp-model rtl-e2e-bp-mpp-model rtl-e2e-bp-vlc-model rtl-e2e-bp-ich-model rtl-vlc-capture rtl-vlc-capture-bp-model rtl-vlc-replay rtl-vlc-replay-bp-model rtl-flatness-replay rtl-lint rtl-slang rtl-smoke
+.PHONY: golden images model model-clean model-run model-4k model-regression rtl-clean rtl-e2e rtl-e2e-multi rtl-e2e-flat-model rtl-e2e-vlc-model rtl-e2e-bp-model rtl-e2e-bp-mpp-model rtl-e2e-bp-vlc-model rtl-e2e-bp-ich-model rtl-vlc-capture rtl-vlc-capture-bp-model rtl-vlc-replay rtl-vlc-replay-bp-model rtl-flatness-replay rtl-lint rtl-slang rtl-smoke
 
 GOLDEN_SEED ?= 0x445343
 GOLDEN_PATTERN ?= random
 BLOCK_PRED ?= 1
+REGRESSION_PARALLEL ?= 2
 
 golden:
 	python3 tests/verilator/generate_golden.py --seed $(GOLDEN_SEED) --pattern $(GOLDEN_PATTERN) --block-pred $(BLOCK_PRED)
@@ -18,6 +19,14 @@ model-clean:
 
 model-run: images model
 	cd model/config && ../src/dsc -F test.cfg
+
+model-4k: images model
+	python3 tools/generate_test_images.py --width 3840 --height 2160 --output model/testdata4k --list-output model/config/test_list_4k.txt
+	cd model/config && ../src/dsc -F test_4k.cfg
+	cd model/config && ../src/dsc -F test_4k_dec.cfg
+
+model-regression: model
+	python3 tools/run_dsc_regression.py --parallel $(REGRESSION_PARALLEL) --quick
 
 rtl-lint:
 	verilator --lint-only --timing -Wall -Wno-fatal \
@@ -43,6 +52,17 @@ rtl-e2e: golden
 		--top-module tb_dsc_e2e -f tests/verilator/rtl.f \
 		tests/verilator/tb_dsc_e2e.sv
 	./obj_dir/Vtb_dsc_e2e
+
+# 多 slice / 多分辨率 e2e。向量由 generate_golden.py 生成；MULTI_CASE 指定用例名
+#（如 ms2、ms2_192；缺省读 generated/ 单 slice）。多 slice 交织缺陷见 rtl_fix_log.md。
+rtl-e2e-multi: golden
+	verilator --binary --timing --assert -Wall -Wno-fatal \
+		-Wno-WIDTH -Wno-UNUSED -Wno-IMPORTSTAR -Wno-PINCONNECTEMPTY \
+		-Wno-BLKSEQ -Wno-DECLFILENAME -Wno-GENUNNAMED -Wno-MULTIDRIVEN \
+		-Wno-TIMESCALEMOD \
+		--top-module tb_dsc_e2e_multi -f tests/verilator/rtl.f \
+		tests/verilator/tb_dsc_e2e_multi.sv --Mdir obj_multi
+	./obj_multi/Vtb_dsc_e2e_multi $(if $(MULTI_CASE),+case=$(MULTI_CASE),)
 
 # 用独立 C++ function model 替换行尾 flatness QP 调整，用于模块级 A/B。
 rtl-e2e-flat-model: golden
