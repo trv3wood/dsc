@@ -1,0 +1,9 @@
+../testdata4k/black.ppm
+../testdata4k/white.ppm
+../testdata4k/gradient.ppm
+../testdata4k/ramp_rgb.ppm
+../testdata4k/color_bars.ppm
+../testdata4k/checkerboard.ppm
+../testdata4k/fine_lines.ppm
+../testdata4k/flat_mix.ppm
+../testdata4k/noise.ppm

@@ -1,7 +1,9 @@
 ../testdata/black.ppm
 ../testdata/white.ppm
 ../testdata/gradient.ppm
+../testdata/ramp_rgb.ppm
 ../testdata/color_bars.ppm
 ../testdata/checkerboard.ppm
 ../testdata/fine_lines.ppm
+../testdata/flat_mix.ppm
 ../testdata/noise.ppm

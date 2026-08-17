@@ -4,6 +4,7 @@ model/src/dsc
 
 # 参考模型运行产物
 model/testdata/
+model/testdata4k/
 model/config/log.txt
 model/config/*.dsc
 model/config/*.dpx
@@ -16,6 +17,7 @@ model/config/*.yuv
 *.wlf
 work/
 obj_dir/
+obj_multi/
 tests/verilator/generated/
 
 # Python 缓存
