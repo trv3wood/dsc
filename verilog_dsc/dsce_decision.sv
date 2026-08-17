@@ -97,6 +97,10 @@ module dsce_decision
     logic [4:0]                     i_predict_size [8:0];
     logic [6:0]                     i_vlc_size [2:0];
 
+    // 当前组右像素的组合计算与行末锁存值
+    tDSC_PIXEL                      i_right_pixel_comb;
+    tDSC_PIXEL                      i_right_reg;
+
 
     // ------------------------------------------------------------------------------------------------------------
     //                                             processes
@@ -250,15 +254,35 @@ module dsce_decision
             dsc_recon_group_out = dsc_ich_group_in;
         end // if
 
+        // 当前组的末像素：行末部分组按 slice_width_alignment 选实际末像素，
+        // 否则为完整组的第三个样本。行末间隙（i_last_group_out=1 且无新组）
+        // 时 i_ich_selected_out 已随 dsc_predict_valid_in 回落为 0，dsc_recon_group_out
+        // 会从 ICH 像素切换到 predict+residual 路径；此处仅作组合计算，输出用
+        // RightPixel 里锁存的行末值（见 dsc_right_pixel_out 的 assign）。
         if (i_last_group_out == 1'b1 && dsc_valid_in == 1'b0) begin
             case (cfg_dsc_encoder.slice_width_alignment)
-                3'h1:       dsc_right_pixel_out = dsc_recon_group_out[0];
-                3'h3:       dsc_right_pixel_out = dsc_recon_group_out[1];
-                default:    dsc_right_pixel_out = dsc_recon_group_out[2];
+                3'h1:       i_right_pixel_comb = dsc_recon_group_out[0];
+                3'h3:       i_right_pixel_comb = dsc_recon_group_out[1];
+                default:    i_right_pixel_comb = dsc_recon_group_out[2];
             endcase
         end else begin
-            dsc_right_pixel_out = dsc_recon_group_out[2];
+            i_right_pixel_comb = dsc_recon_group_out[2];
         end // if
     end : ReconOutput
+
+
+    // 普通组在 fd(=pd) 沿的 MPP/MMAP 采样依赖组合 dsc_recon_group_out 已稳定为
+    // 上一组末像素；行末间隙组合会因 ICH 回落而错位，改用 pd 沿锁存的行末值。
+    assign dsc_right_pixel_out = (i_last_group_out == 1'b1 && dsc_valid_in == 1'b0) ?
+                                 i_right_reg : i_right_pixel_comb;
+
+    // pd 沿锁存当前组末像素，供行末间隙输出稳定值
+    always_ff@(posedge dsc_clk or negedge dsc_reset_n) begin : RightPixel
+        if (dsc_reset_n == 1'b0) begin
+            i_right_reg <= kDSC_PIXEL_INIT;
+        end else if (dsc_valid_in == 1'b1) begin
+            i_right_reg <= i_right_pixel_comb;
+        end // if
+    end : RightPixel
 
 endmodule : dsce_decision

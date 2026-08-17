@@ -349,6 +349,14 @@ module tb_dsc_e2e;
             rate_qp_group++;
         end
         if (dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_valid_fd) begin
+            if ((predict_input_group < 4) || (predict_input_group >= 1886 && predict_input_group < 1890) ||
+                (predict_input_group >= 2045 && predict_input_group < 2050))
+                $display("FD group=%0d t=%0d st_qp=%0d prim_qp=%0d prev_qp=%0d valid_next=%0b",
+                         predict_input_group, $time,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_st_qp,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_primary_qp,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_prev_qp,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_valid_pipe[2]);
             if ((predict_input_group >= 37 && predict_input_group <= 40) ||
                 (predict_input_group >= 384 && predict_input_group <= 386)) begin
                 $display("MMAP_INPUT_Y group=%0d current=%0d,%0d,%0d right=%0d q=%0d",
@@ -417,6 +425,17 @@ module tb_dsc_e2e;
             flatness_source_group++;
         end
         if (dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_valid_pd) begin
+            if ((vlc_input_group < 4) || (vlc_input_group >= 1886 && vlc_input_group < 1889))
+                $display("PD group=%0d t=%0d right=%0d/%0d/%0d recon2=%0d/%0d/%0d last=%0b ichsel=%0b",
+                         vlc_input_group, $time,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_right_pixel_dec.y,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_right_pixel_dec.co,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_right_pixel_dec.cg,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_decision_inst.dsc_recon_group_out[2].y,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_decision_inst.dsc_recon_group_out[2].co,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_decision_inst.dsc_recon_group_out[2].cg,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_last_pd,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_decision_inst.dsc_ich_selected_out);
             if (vlc_input_group == 25 ||
                 (vlc_input_group >= 37 && vlc_input_group <= 41) ||
                 (vlc_input_group >= 60 && vlc_input_group <= 64) ||
@@ -628,9 +647,27 @@ module tb_dsc_e2e;
             end
         end
         if (dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_valid_pipe[2]) begin
+            if ((rate_group >= 2045) && (rate_group < 2049))
+                $display("RATE_RAW group=%0d t=%0d st_qp=%0d prim_qp_reg=%0d valid_next=%0b valid_out=%0b",
+                         rate_group, $time,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_st_qp,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_rc_primary_qp,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_valid_pipe[2],
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.dsc_qp_valid_out);
+            if ((rate_group >= 2045) && (rate_group < 2049))
+                $display("RA_DBG group=%0d orig_flat=%0b last_used=%0d range14=%0d prim_qp=%0d prev_qp=%0d rc_prev_in=%0d rc_prim=%0d",
+                         rate_group,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_adjust_inst.i_orig_is_flat,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_adjust_inst.i_last_used_qp_in_slice_line,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_adjust_inst.i_range_max_qp_14,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_primary_qp,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_prev_qp,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_rc_prev_qp,
+                         dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_rc_primary_qp);
             if ((rate_group < 12) || ((rate_group >= 20) && (rate_group < 42)) ||
                 ((rate_group >= 380) && (rate_group < 390)) ||
-                ((rate_group >= 700) && (rate_group < 712)))
+                ((rate_group >= 700) && (rate_group < 712)) ||
+                ((rate_group >= 2044) && (rate_group < 2050)))
                 $display("RATE group=%0d coded=%0d rc=%0d fullness=%0d target=%0d min=%0d max=%0d prev=%0d prev2=%0d current=%0d current_st=%0d inc=%0d/%0d next=%0d decisions=%02x edge=%0d factor=%0d v2=%0b cfgver=%0d",
                          rate_group,
                          dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_coded_group_size,
