@@ -12,6 +12,9 @@ from pathlib import Path
 
 WIDTH = 96
 HEIGHT = 108
+SLICE_WIDTH = 96
+SLICE_HEIGHT = 108
+CASE_DIR = ""  # 非空时输出到 generated/<case>/
 DEFAULT_SEED = 0x445343
 
 
@@ -31,6 +34,35 @@ def parse_args() -> argparse.Namespace:
         help="C model BLOCK_PRED_ENABLE（默认：1）",
     )
     parser.add_argument(
+        "--width",
+        type=int,
+        default=96,
+        help="图像宽度（默认 96；须为 4 的倍数）",
+    )
+    parser.add_argument(
+        "--height",
+        type=int,
+        default=108,
+        help="图像高度（默认 108；须为 slice-height 的倍数）",
+    )
+    parser.add_argument(
+        "--slice-width",
+        type=int,
+        default=96,
+        help="slice 宽度（默认整幅）；0 表示每行一个 slice",
+    )
+    parser.add_argument(
+        "--slice-height",
+        type=int,
+        default=108,
+        help="slice 高度（默认整幅）",
+    )
+    parser.add_argument(
+        "--case",
+        default="",
+        help="用例名，非空时向量输出到 generated/<case>/",
+    )
+    parser.add_argument(
         "--pattern",
         choices=("random", "flat", "flatness"),
         default="random",
@@ -39,6 +71,12 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.seed < 0:
         parser.error("--seed 必须是非负整数")
+    if args.width % 4:
+        parser.error("--width 必须是 4 的倍数（每拍 4 像素）")
+    if args.slice_width and args.width % args.slice_width:
+        parser.error("--width 必须是 --slice-width 的倍数")
+    if args.height % args.slice_height:
+        parser.error("--height 必须是 --slice-height 的倍数")
     return args
 
 
@@ -280,15 +318,22 @@ def split_vlc_trace(trace_path: Path, generated: Path) -> list[int]:
 
 
 def main() -> None:
+    global WIDTH, HEIGHT, SLICE_WIDTH, SLICE_HEIGHT, CASE_DIR
     args = parse_args()
+    WIDTH, HEIGHT = args.width, args.height
+    SLICE_WIDTH, SLICE_HEIGHT = args.slice_width, args.slice_height
+    CASE_DIR = args.case
     repository = Path(__file__).resolve().parents[2]
     generated = repository / "tests" / "verilator" / "generated"
+    if CASE_DIR:
+        generated = generated / CASE_DIR
     generated.mkdir(parents=True, exist_ok=True)
-    source = generated / "rgb_96x108.ppm"
+    source = generated / f"rgb_{WIDTH}x{HEIGHT}.ppm"
     pixels = write_ppm(source, args.seed, args.pattern)
     write_pixels(generated / "pixels.hex", pixels)
 
     config = generated / "golden.cfg"
+    slice_width_line = f"SLICE_WIDTH {SLICE_WIDTH}" if SLICE_WIDTH else "//SLICE_WIDTH 0  // one slice per line"
     config.write_text(
         "\n".join(
             (
@@ -296,8 +341,8 @@ def main() -> None:
                 "FUNCTION 1",
                 f"SRC_LIST {generated / 'source_list.txt'}",
                 f"OUT_DIR {generated}",
-                "SLICE_WIDTH 96",
-                "SLICE_HEIGHT 108",
+                slice_width_line,
+                f"SLICE_HEIGHT {SLICE_HEIGHT}",
                 f"BLOCK_PRED_ENABLE {args.block_pred}",
                 "VBR_ENABLE 0",
                 "LINE_BUFFER_BPC 16",
@@ -332,12 +377,15 @@ def main() -> None:
         env=model_environment,
         check=True,
     )
-    write_flatness_replay(generated, pixels, group_trace)
-    write_group_boundary_expected(generated, group_trace)
+    # flatness/group replay 向量以整幅一 slice 为边界假设；多 slice 划分时跳过
+    #（该向量供独立 replay tb 使用，不参与端到端 payload 对拍）。
+    if SLICE_WIDTH in (0, WIDTH) and SLICE_HEIGHT == HEIGHT:
+        write_flatness_replay(generated, pixels, group_trace)
+        write_group_boundary_expected(generated, group_trace)
     muxword_counts = split_mux_trace(mux_trace, generated)
     vlc_counts = split_vlc_trace(vlc_trace, generated)
 
-    stream = (generated / "rgb_96x108.dsc").read_bytes()
+    stream = (generated / f"rgb_{WIDTH}x{HEIGHT}.dsc").read_bytes()
     if stream[:4] != b"DSCF":
         raise RuntimeError("参考模型输出缺少 DSCF 文件头")
     pps = stream[4:132]
@@ -345,7 +393,11 @@ def main() -> None:
     write_hex(generated / "pps.hex", pps)
     write_hex(generated / "expected_payload.hex", payload)
     (generated / "metadata.txt").write_text(
-        f"width={WIDTH}\nheight={HEIGHT}\nbeats={len(pixels) // 4}\n"
+        f"width={WIDTH}\nheight={HEIGHT}\n"
+        f"slice_width={SLICE_WIDTH if SLICE_WIDTH else WIDTH}\n"
+        f"slice_height={SLICE_HEIGHT}\n"
+        f"slices_per_line={WIDTH // SLICE_WIDTH if SLICE_WIDTH else 1}\n"
+        f"beats={len(pixels) // 4}\n"
         f"payload_bytes={len(payload)}\nseed=0x{args.seed:x}\npattern={args.pattern}\n"
         f"block_pred={args.block_pred}\n"
         f"ssp_muxwords={','.join(str(count) for count in muxword_counts)}\n"
@@ -353,7 +405,8 @@ def main() -> None:
         encoding="ascii",
     )
     print(
-        f"golden vector: PPS={len(pps)} bytes, payload={len(payload)} bytes, "
+        f"golden vector: {WIDTH}x{HEIGHT} slice={SLICE_WIDTH or WIDTH}x{SLICE_HEIGHT} "
+        f"PPS={len(pps)} bytes, payload={len(payload)} bytes, "
         f"seed=0x{args.seed:x}, pattern={args.pattern}, block_pred={args.block_pred}"
     )
 

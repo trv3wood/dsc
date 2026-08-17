@@ -183,5 +183,32 @@
   等价位流，不影响打包字节）。
 - `rtl-flatness-replay`：3456 groups 逐事务 0 失配。
 - `rtl-bp-replay`：use_bp/vector/predict/residual 全 0 失配。
-- 未覆盖：随机 backpressure、输入空泡、多 slice、RGB/YUV 其他位深/采样、
+- 未覆盖：随机 backpressure、输入空泡、RGB/YUV 其他位深/采样、
   DSC 1.1、真实 SRAM 延迟签核。
+
+## 多 slice 交织压测（未收敛，已知缺陷）
+
+多分辨率/多 slice RTL 对拍（`tb_dsc_e2e_multi.sv` + `generate_golden.py` 参数化
+`--slice-width/--slice-height`）暴露两个 RTL 层面缺陷，单 slice 基线程零回归
+（`make rtl-e2e` 与多 slice tb 均 PASS）：
+
+1. **`dsce_format_buffer` 不按 chunk 打 last → slice_mux 从不切换 slice**。
+   原实现一次输出整个 slice 的 muxword 流，`axi_last_out` 在 chunk 边界恒低，
+   `dsce_slice_mux` 的 `i_slice_select` 因此停在 slice0，多 slice 输出为
+   slice 顺序而非 DSC 标准的 chunk 交替。已在 `dsce_format_buffer.sv` 加入
+   **多 slice 门控的 chunk 边界 last**（`slices_per_line>1` 时每输出
+   chunk_size/6 个 word 组合拉高 `axi_last_out` 并暂停等待 slice_mux 轮询；
+   单 slice 时行为与原实现完全一致），slice_mux 现正常切换（ms2 实测 138 次）。
+   该修复已在仓库中，单 slice 回归通过。
+
+2. **`dsce_partition` 跨行轮换 slice→processor，processor 输出流混多个 slice 列**。
+   `dsce_partition` 的 `i_slice_select` 在行末轮换且跨行延续（不随 `axi_line_in`
+   重置），导致同一 processor 的连续行处理不同 slice 列，其 format 输出流与
+   C 模型"每行 slice0..N 顺序"错位（ms2 首失配位于 chunk 边界后的第 7 字节）。
+   尝试在行首重置 select 使 processor 固定 slice 列，但引入 line0
+   slice-buffer 超时（时序敏感），已回退，**该层面修复未收敛，列为专项**。
+
+   ms2 现状（可复现）：`partition_v=1296/1296`（像素正确分配）、
+   `last_in=69/69`、`select_chg=138`（交织已切换）但 `top_mis=13337`（顺序错位）。
+   修复方向：让 partition 每行将 slice 列固定映射到 processor（spl≤pSPC 时），
+   spl>pSPC 时行内回绕复用，并保证行末 slice-buffer 读侧时序。

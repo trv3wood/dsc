@@ -98,6 +98,15 @@ module dsce_format_buffer
     logic                           i_dsc_xmit_okay;
     logic                           i_axi_xmit_okay;
 
+    // ----- multi-slice chunk interleave ----- //
+    // 每输出一个 chunk（=该 slice 每行的字数）后打 last 交回 slice_mux 轮询；
+    // 仅当 slices_per_line>1 时启用，单 slice 路径与原实现完全一致。
+    logic [15:0]                    i_axi_slice_height;
+    logic [15:0]                    i_axi_chunk_words;
+    logic                           i_axi_chunk_boundary;
+    logic                           i_axi_multi_slice;
+    logic                           i_axi_pause_chunk;
+
 
     // --------------------------------------------------------------------------
     //  binary to gray code converter
@@ -132,6 +141,19 @@ module dsce_format_buffer
         i_axi_ren = (i_axi_read_init == 1'b1 || (axi_tvalid_out == 1'b1 && axi_tready_out == 1'b1 && i_read_state == kRS_DATA_READY)) ? 1'b1 : 1'b0;
         i_axi_raddr_p1 = i_axi_raddr + 8'd1;
         i_axi_start_of_frame = (i_axi_frame_toggle[1] != i_axi_frame_toggle[0]) ? 1'b1 : 1'b0;
+
+        // 多 slice：每 chunk 的字数 = target_words / slice_height（每 slice 每行）。
+        i_axi_multi_slice = (cfg_dsc_encoder.slices_per_line > 5'd1);
+        i_axi_chunk_words = (i_axi_multi_slice && i_axi_slice_height != 16'd0) ?
+                            (i_axi_target_words / i_axi_slice_height) : 16'd0;
+        i_axi_chunk_boundary = (i_axi_chunk_words != 16'd0 && i_read_state == kRS_DATA_READY) &&
+                               ((i_axi_out_count + 16'd1) % i_axi_chunk_words == 16'd0);
+
+        // last 组合输出：仅多 slice 时生效，与 chunk 最后一个数据 word 的传输同拍；
+        // slice 数据读尽（kRS_DATA_LAST 握手）同样拉高。单 slice 时恒 0，行为与原始一致。
+        axi_last_out = i_axi_multi_slice &&
+                       ((i_read_state == kRS_DATA_LAST && axi_tready_out == 1'b1) ||
+                        (i_axi_chunk_boundary && i_axi_ren == 1'b1));
     end : SignalMap
 
 
@@ -213,23 +235,23 @@ module dsce_format_buffer
     always_ff@(posedge axi_clk or negedge axi_reset_n) begin : AXIRead
         if (axi_reset_n == 1'b0) begin
             axi_tvalid_out <= 1'b0;
-            axi_last_out <= 1'b0;
 
             i_read_state <= kRS_XMIT_DELAY;
             i_axi_read_init <= 1'b0;
             i_axi_raddr <= 8'h00;
             i_axi_out_count <= 16'd0;
+            i_axi_pause_chunk <= 1'b0;
 
         end else begin
 
             // read data staging
-            axi_last_out <= 1'b0;
             i_axi_read_init <= 1'b0;
 
             if (i_axi_start_of_frame == 1'b1) begin
                 i_read_state <= kRS_XMIT_DELAY;
                 axi_tvalid_out <= 1'b0;
                 i_axi_out_count <= 16'd0;
+                i_axi_pause_chunk <= 1'b0;
             end else begin
                 case (i_read_state)
                     kRS_XMIT_DELAY:  begin
@@ -238,16 +260,22 @@ module dsce_format_buffer
                             i_read_state <= kRS_DATA_INIT;
                             i_axi_read_init <= 1'b1;
                         end else if (i_axi_write_idle == 1'b1 && i_axi_write_count != 16'd0 &&
-                                     i_axi_out_count < i_axi_target_words) begin
+                                     i_axi_out_count < i_axi_target_words &&
+                                     i_axi_pause_chunk == 1'b0) begin
                             // 数据已读尽、编码器已停止写（写计数稳定）且未达到目标长度：零填充。
+                            // chunk 边界暂停期间禁止误入 PAD（编码器写下一 chunk 前可能短暂停写）。
                             i_read_state <= kRS_DATA_PAD;
                         end // if
                     end // kRS_XMIT_DELAY
 
                     kRS_DATA_INIT:  begin
                         axi_tvalid_out <= 1'b1;
+                        i_axi_pause_chunk <= 1'b0;   // 已重新获得数据，恢复普通读进
                         if (i_axi_ren == 1'b1 && i_axi_raddr_p1 == i_axi_waddr) begin
                             i_read_state <= kRS_DATA_LAST;
+                        end else if (i_axi_ren == 1'b1 && i_axi_chunk_boundary) begin
+                            i_axi_pause_chunk <= 1'b1;
+                            i_read_state <= kRS_XMIT_DELAY;
                         end else begin
                             i_read_state <= kRS_DATA_READY;
                         end // if
@@ -257,6 +285,9 @@ module dsce_format_buffer
                         axi_tvalid_out <= 1'b1;
                         if (i_axi_ren == 1'b1 && i_axi_raddr_p1 == i_axi_waddr) begin
                             i_read_state <= kRS_DATA_LAST;
+                        end else if (i_axi_ren == 1'b1 && i_axi_chunk_boundary) begin
+                            i_axi_pause_chunk <= 1'b1;
+                            i_read_state <= kRS_XMIT_DELAY;
                         end // if
                     end // kRS_DATA_READY
 
@@ -322,6 +353,11 @@ module dsce_format_buffer
     // 写字数用于判断编码器是否已停止写。
     generate for (genvar wc = 0; wc < 16; wc = wc + 1) begin : gen_wcount
         gprim_sync_stage  sync_wcount_inst (.sync_clk (axi_clk), .reset_n(axi_reset_n), .async_in (i_dsc_write_count[wc]), .sync_out(i_axi_write_count[wc]));
+    end endgenerate
+
+    // slice_height 同步到 AXI 读域，用于计算每 chunk 的 muxword 字数。
+    generate for (genvar sh = 0; sh < 16; sh = sh + 1) begin : gen_sh
+        gprim_sync_stage  sync_sh_inst   (.sync_clk (axi_clk), .reset_n(axi_reset_n), .async_in (cfg_pps.slice_height[sh]), .sync_out(i_axi_slice_height[sh]));
     end endgenerate
 
     // 检测 AXI 域中写计数是否持续稳定（编码器停止写）。要求连续 64 拍不变，
