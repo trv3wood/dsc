@@ -96,7 +96,7 @@ module dsce_slice
     tDSC_QLEVEL                 i_qlevel_c, i_qlevel_c_res;
     logic                       i_force_mpp;
 
-    tDSC_QLEVEL                 i_rc_primary_qp, i_rc_primary_qp_next, i_rc_prev_qp;
+    tDSC_QLEVEL                 i_rc_primary_qp, i_rc_primary_qp_next, i_rc_primary_qp_prev, i_rc_prev_qp;
     tDSC_QLEVEL                 i_primary_qp, i_primary_qp_res, i_prev_qp;
 
     logic                       i_valid_fd;
@@ -506,6 +506,7 @@ module dsce_slice
         .dsc_rc_primary_qp_in       (i_rc_primary_qp),
         .dsc_rc_qp_valid_in         (i_valid_rc_next),
         .dsc_rc_primary_qp_next_in  (i_rc_primary_qp_next),
+        .dsc_rc_primary_qp_prev_in  (i_rc_primary_qp_prev),
         .dsc_rc_prev_qp_in          (i_rc_prev_qp),
         // rate control modified qp out
         .dsc_primary_qp_out         (i_primary_qp),
@@ -543,6 +544,7 @@ module dsce_slice
         .dsc_qp_valid_out           (i_valid_rc),
         .dsc_qp_valid_next          (i_valid_rc_next),
         .dsc_primary_qp             (i_rc_primary_qp),
+        .dsc_primary_qp_prev        (i_rc_primary_qp_prev),
         .dsc_primary_qp_next        (i_rc_primary_qp_next),
         .dsc_prev_qp                (i_rc_prev_qp),
         .dsc_force_mpp              (i_force_mpp)

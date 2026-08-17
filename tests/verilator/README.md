@@ -239,16 +239,40 @@ byte 2255。真实 MPP 改为在 valid 当拍锁存计算结果并随 valid 流�
 中 `range_max_qp` 实际位于 `[10:6]`（`dsce_rate` 正确）；该信号在 `dsce_flat_flags`
 中未使用，属死信号，未改。
 
-### seed `0x1234` 剩余差异
+### seed `0x1234` 剩余差异与行末 QP 回退修复
 
-`make rtl-e2e GOLDEN_SEED=0x1234` 仍未通过。在三个修复之上，首个 VLC 输入差异推进到
-全局 group 1889（line 59 group 1）：色度 predicted size `4/3/3` vs `4/1/3`。全 RTL
-与 `rtl-e2e-ich-model`（真实 BP + function model ICH）在全局 group 512（首个 ICH 组
-511 之后）的重建反馈首次分叉：两基线在该组的 VLC 输入都匹配 golden，但 function
-model 的 ICH 像素与真实 RTL 差一个小量，落在量化容差内，累积后分别在 1889（全 RTL）
-与 2048（ich-model，QP 差异）暴露。这说明 seed `0x1234` 涉及 ICH history 重建累积
-精度与码控边界两个层面，需在 `dsce_ich_history`/function model 的逐组像素级比对
-上继续排查，当前不作为通过基准。
+`make rtl-e2e GOLDEN_SEED=0x1234` 全 RTL 现端到端 PASS（15552 bytes 逐字节一致，
+仅 ssp0 前 4 个 VLC fragment 与 C model 的片段粒度假失配，不影响打包后的 byte
+流，与 seed `0x445343` 的 muxword 0 失配同类）。`rtl-e2e`（默认 seed）、
+`rtl-flatness-replay` 与 `rtl-bp-replay` 均 0 失配。
+
+此前首个 VLC 输入差异在 group 1889/2048 附近，根因是码控 QP 边界，不是 ICH
+history 重建累积精度：
+
+- C model 中 `primaryQp(G) = RateControl(G-1) 提交后的 stQp(G-1)`，即 prevQp 滞后
+  stQp 一组。`dsce_rate` 在 `i_valid_pipe[2]` 把 `i_st_qp` 提交进 `dsc_primary_qp`，
+  普通行 fd(G+1) 在提交(G) 前读到最近提交的 stQp(G-1)，与 C model 一致。
+- 行末 flush 使下一行首组 fd 延后到上一行末组提交之后，读到 `stQp(L-1)`；而 C model
+  期望该组读到 `stQp(L-2)`（行末组 RateControl 后 `prevQp` 仍为行末前的 stQp）。
+  `dsce_rate_adjust` 的 `i_orig_is_flat` 分支在 `i_last_used_qp_in_slice_line
+  >= i_range_max_qp_14`（行末 QP 已达 range 上限、DSC 1.2 不强制 flat QP）时，
+  原实现直接继承已推进的 primary QP，使下一行前几组的码控/VLC 状态偏离 golden。
+- 修复：`dsce_rate` 新增输出 `dsc_primary_qp_prev`，在提交沿保留上一次提交值
+  （线 754-757、872-881）；`dsce_slice` 穿线；`dsce_rate_adjust` 新增
+  `dsc_rc_primary_qp_prev_in`，在 `i_orig_is_flat` 且 QP 未达 range 上限时回退
+  primary/prev QP 到 `dsc_rc_primary_qp_prev_in` / `dsc_rc_prev_qp_in`
+  （线 109-114）。
+
+A/B 验证：单独还原三个 RTL 文件（HEAD 状态）重跑 seed `0x1234` 端到端失配
+5647/15552 bytes；带修复则逐字节一致，证明该修复是 seed `0x1234` 通过的必要条件。
+真实 ICH、VLC 与 BP 均未替换。
+
+```sh
+make rtl-e2e GOLDEN_SEED=0x1234       # PASS
+make rtl-e2e                           # PASS (seed 0x445343)
+make rtl-flatness-replay               # 0 失配
+make rtl-bp-replay                     # 0 失配
+```
 
 ## 仿真假设
 

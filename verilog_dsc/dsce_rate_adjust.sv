@@ -55,6 +55,7 @@ module dsce_rate_adjust
     input  tDSC_QLEVEL          dsc_rc_primary_qp_in,           // primary qp input
     input  logic                dsc_rc_qp_valid_in,             // next primary qp valid
     input  tDSC_QLEVEL          dsc_rc_primary_qp_next_in,      // pre-register primary qp
+    input  tDSC_QLEVEL          dsc_rc_primary_qp_prev_in,      // 上一次提交的 primary qp
     input  tDSC_QLEVEL          dsc_rc_prev_qp_in,              // previous qp value
 
     // rate control modified qp out
@@ -105,6 +106,12 @@ module dsce_rate_adjust
         if (i_orig_is_flat == 1'b1 && i_last_used_qp_in_slice_line < i_range_max_qp_14) begin
             dsc_primary_qp_out = i_adjusted_qp;
             dsc_prev_qp_out = i_adjusted_qp;
+        end else if (i_orig_is_flat == 1'b1) begin
+            // 行末 flush 使行首组 fd 延后到行末组提交之后，dsc_primary_qp 已
+            // 推进到 stQp(G)，而 C model 的 prevQp 仍为 stQp(G-1)。行末 QP
+            // 未达 range_max_qp 下界、不强制 flat 时，回退到上一次提交值。
+            dsc_primary_qp_out = dsc_rc_primary_qp_prev_in;
+            dsc_prev_qp_out = dsc_rc_prev_qp_in;
         end else begin
             dsc_primary_qp_out = i_rc_primary_qp_effective;
             dsc_prev_qp_out = dsc_rc_prev_qp_in;

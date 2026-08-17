@@ -56,6 +56,7 @@ module dsce_rate
     output logic            dsc_qp_valid_out,       // primary qp valid output
     output logic            dsc_qp_valid_next,      // 本拍将提交的 qp valid
     output tDSC_QLEVEL      dsc_primary_qp,         // primary quant level
+    output tDSC_QLEVEL      dsc_primary_qp_prev,    // 上一次提交的 primary qp（行末 flush 后回退一级）
     output tDSC_QLEVEL      dsc_primary_qp_next,    // 本拍将提交的 primary qp
     output tDSC_QLEVEL      dsc_prev_qp,            // previous qp out,
     output logic            dsc_force_mpp           // force MPP mode
@@ -753,6 +754,7 @@ module dsce_rate
     always_ff@(posedge dsc_clk or negedge dsc_reset_n) begin : ShortTermRC
         if (dsc_reset_n == 1'b0) begin
             dsc_primary_qp <= kDSC_QLEVEL_ZERO;
+            dsc_primary_qp_prev <= kDSC_QLEVEL_ZERO;
             dsc_qp_valid_out <= 1'b0;
 
             i_prev_qp <= kDSC_QLEVEL_ZERO;
@@ -870,6 +872,12 @@ module dsce_rate
                 dsc_primary_qp <= 5'd0;
             end else if (i_valid_pipe[2] == 1'b1) begin
                 dsc_qp_valid_out <= 1'b1;
+                // C model 的 prevQp 滞后 stQp 一组提交：RateControl(G) 完成后
+                // prevQp 仍是 stQp(G-1)。普通行 fd(G+1) 在提交(G) 前读到最近
+                // 提交 stQp(G-1)；行末 flush 使行首组 fd 延后到提交(G) 之后，
+                // 需要回退到上一次提交（见 dsce_rate_adjust 的 i_orig_is_flat
+                // 分支）。这里保留上一次提交值供行末后回退。
+                dsc_primary_qp_prev <= dsc_primary_qp;
                 dsc_primary_qp <= i_st_qp;
             end // if
 
