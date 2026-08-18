@@ -1,15 +1,7 @@
 ---
-name: debug-rtl-by-model-substitution
+name: debug-rtl-by-golden-diff
 description: >
-  Agentic discipline for localizing and fixing RTL-vs-reference-model divergences by
-  reusing the project's existing golden end-to-end scoreboard and boundary traces to find
-  the first mismatch, escalating to value or cycle functional-model substitution only when
-  algorithm-vs-boundary-timing isolation is required. Use when RTL differs from a reference
-  model at output bytes, pipeline boundary, or upstream decision level, or when the first
-  differing transaction must be localized and the fix re-verified under a different
-  configuration. Reject predictors that consume golden output, absolute-cycle or
-  configuration specialization, force injection, declaring a fix from a substituted baseline
-  without restoring the real module, and treating lint/reset-smoke as functional correctness.
+  Agentic discipline for localizing and fixing RTL-vs-reference-model divergences.
 ---
 
 # RTL↔参考模型差分调试（agentic 纪律）
@@ -35,6 +27,29 @@ scoreboard 与边界打点定位首差异，而不是新建观察点或 harness�
 
 可选检查：lint/elaborate 确认端口与 filelist；reset smoke 确认可复位。它们只证明可编译可复位，
 **不等于**功能正确。
+
+## 推荐工具
+
+下表是**通用推荐**（工具→能力→何时用），不是门禁；缺失或未验证的工具按"工具纪律"标
+**blocked**，换用其他路径即可。各工具的具体版本、在本项目的调用动词与 blocked 判据，一律以
+各项目绑定文档的"外部工具总结"表为**单一事实来源**——该表是快照、状态会漂移，使用前先 probe。
+
+| 工具 | 能力 | 推荐场景 |
+|---|---|---|
+| verilator | 编译/仿真/波形 | 主仿真器：跑端到端基线、lint、smoke、出 VCD trace |
+| verilator_coverage | line/toggle 覆盖率分析、annotate、合并 | 定位盲区、量化哪些路径未被触发；达标≠正确 |
+| slang | SV elaborate/lint | 改端口/连接后快速确认 hierarchy 完整、可复位 |
+| slang-server | `.sv/.svh/.v/.vh` LSP | 跨文件跳转/引用 RTL 信号，定位定义与使用点 |
+| clangd | C 模型 LSP | 参考模型与 function model 的跳转/引用 |
+| gtkwave | VCD 波形查看 | 时序/握手类差异；配 `--trace` 产物观察对齐 |
+| gcc/g++ | C 模型 + function model DPI | 构建参考模型与替换基线 |
+| make | 构建 | 统一入口；不要绕过 target 手搓编译命令 |
+| python3 | golden 向量生成、回归、trace 解析 | 换 seed/图案、批量回归、把 C trace 转测试向量 |
+| verdi（可选） | 商业波形/调试 | 若本机可用可替代 gtkwave；未装如实标 blocked，不阻塞调试 |
+
+> 定位盲区用覆盖率、看时序用波形、改结构后先 lint/elaborate——但三者只证明"可编译/可触发/
+> 可复位"，功能正确仍以 golden 逐字节一致为准（见"硬约束"）。
+
 
 ## 升级路径：function-model 替换（仅当需要）
 
@@ -62,39 +77,42 @@ A/B。这是升级路径，不是默认流程。
 
 ### adapter 纪律
 
-- 显式处理 reset、state、latency、valid/ready、backpressure；不构造依赖预期输出的预测器。
+- 显式处理 reset、state、latency、valid/ready、backpressure；不构造依赖预期输出的预测器
+  （见"硬约束"）。
 - 对无 ready 的算法流水线，可由 adapter 缓存模型结果并按约定延迟输出。
 - 生成 wrapper（Verilator `--sc`）是仿真 adapter，**不是** function model，不得混称。
 - 时序保真度只需覆盖失败用例本身 + valid 密度扫描（连续事务/插空拍/边界），验证用 cycle-aligned
   边界事务比较，不是比值序列相同。
 
-## 不变量（任何时候都不得违反）
+## 硬约束（违反则调试结论无效，任何时候不得触碰）
 
-- **根判据**：golden 输出逐字节一致是端到端通过的唯一标准；lint、elaborate、reset-smoke、部分
-  前缀匹配都不是功能正确。
+以下任何一条都不能违反；违反后的"修复/结论"一律视为无效，不得宣称通过：
+
+- **验收唯一标准 = golden 逐字节一致**。lint、elaborate、reset-smoke、覆盖率达标、部分前缀
+  匹配都不是功能正确。
 - **首差异**：始终收敛第一个失配（字节/事务/层），不用累计失配总数或前缀匹配代替。
-- **工具缺失 = blocked**：任何工具未验证或缺失时如实标 blocked；不得假装可用，不得静默降级为
+- **不得构造依赖预期输出的预测器**；**不得**把 golden 数据注入 DUT 作为实现；**不得**用
+  force 内部信号作为修复。
+- **不得用特化作验收**：修复/结论不得依赖特定 seed/pattern、绝对周期或固定节拍，也不得依赖
+  替换模块未恢复。
+- **替换结论只到边界**：替换后的"通过"只能定位到模块/边界，不得宣称修复。
+- **最终验收**：恢复真实模块后，换至少一个不同 seed/配置 + 随机 backpressure 重验。
+- **工具缺失 = blocked**：工具未验证或缺失时如实标 blocked，不得假装可用、不得静默降级为
   文本搜索。
-- **不得**构造依赖预期输出的预测器；**不得** force 内部信号；**不得**绝对周期/固定节拍特化；
-  **不得** seed/pattern 特化；**不得**把 golden 数据注入 DUT 作为实现。
-- **替换结论边界**：替换通过只能定位到模块/边界，不得宣称修复。
-- **最终验收**：修后恢复真实模块，换至少一个不同 seed/配置 + 随机 backpressure 重验；结果不得
-  依赖 force、绝对周期或 golden 注入。
 - **证据纪律**：关键语义结论要有源码 `file:line` 依据 + EDA 工具交叉验证（仿真打点/trace/replay
   至少一种）。"只读代码不算验证"。
+
+## 诊断纪律（默认遵循；只作定位手段，不作验收标准）
+
+- **固定节拍/seed 的 replay 是合法诊断手段**：固定 `VALID_PERIOD`、固定 seed 的单模块 replay、
+  边界 trace 对拍等，用于定位差异层，可以用。规则是**不得以它作验收**、不得让修复依赖固定节拍
+  或特定 seed。
+- **覆盖率用于定位盲区**：量化哪些路径未被触发、为向量设计提供证据；覆盖率达标不等于功能
+  正确。
+- **lint/elaborate/smoke**：只证明可编译可复位，不等于功能正确。
 
 ## 工具纪律
 
 - 使用前先 `which`/版本 probe 验证工具存在与可用；缺失或未验证标 **blocked**，不得假装可用。
-- 能力→工具映射、每个工具在本项目怎么调用，见项目绑定文档。
-- 工具的 lint/elaborate/smoke 通过不等于功能正确。
-
-## 项目绑定
-
-各项目在各自文档里记录等价的具体命令、打点与工具动词，并在本节点名。
-
-- **本项目（DSC 编码器）**：具体命令、RTL 打点词典、C trace 字段对照、function-model 替换
-  target 表、工具与 blocked 判据，全部见 `tests/verilator/README.md` 的"调试操作手册"节；
-  仓库 make 目标与规范见 `AGENTS.md`。
-- **其他项目**：把 golden harness 命令、边界停表开关、打点/参考 trace 说明、工具动词写入对应
-  项目文档，并在本节点名，即可复用本 skill 的纪律。
+- 能力→工具映射、每个工具在本项目怎么调用、工具缺失判定，见项目绑定文档的"外部工具总结"节。
+- 覆盖率/lint/elaborate/smoke 的定位用法与边界见"诊断纪律"。

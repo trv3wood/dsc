@@ -280,7 +280,7 @@ make rtl-bp-replay                     # 0 失配
 ## 调试操作手册
 
 本节是 DSC 专属的操作参考；通用调试纪律见
-`.claude/skills/debug-rtl-by-model-substitution/SKILL.md`。
+`.claude/skills/debug-rtl-by-golden-diff/SKILL.md`。
 
 ### 快速命令
 
@@ -367,17 +367,37 @@ function model 源文件仍在 `tests/verilator/model/*.cpp`，adapter 在
 `verilog_dsc/dsce_*_function_model.sv`（`ifdef` 守护），可作参考或按新方法论重建目标。
 四情形判定表见 SKILL.md。
 
-### 工具与 blocked 判据
+### 外部工具总结（快照 2026-08-18；状态会漂移，使用前先 probe）
 
-- 可用：verilator 5.032（编译/仿真/波形，`make rtl-e2e-trace`）、slang 11.0.0（`make rtl-slang`
-  elaborate/lint）、gcc/g++ 15.2（C model + function model DPI）、make、python3、gtkwave 3.3.126
-  （`make rtl-e2e-trace` 后 `gtkwave tests/verilator/generated/rtl_e2e_trace.vcd`）。
-- 未接入：verdi（未装）、clangd（PATH 有但无 compile_commands.json，未接入）。
-- **blocked 判据**：`which` 找不到 → blocked；版本 probe 失败 → blocked；存在但项目未接通 →
-  not-wired，需先验证再使用。工具状态是快照、会漂移，使用前先 probe。
-- VCD：`make rtl-e2e-trace`（`--trace --trace-depth 5`）产出
-  `tests/verilator/generated/rtl_e2e_trace.vcd`（已 gitignore）。层次：
-  `tb_dsc_e2e.dsc_encoder.dsce_engine_inst.gen_slice[*].dsce_slice_inst`。
+| 工具 | 版本 | 能力 | 本项目调用 | 状态 |
+|---|---|---|---|---|
+| verilator | 5.032 | 编译/仿真/波形 | `make rtl-e2e`、`rtl-lint`、`rtl-smoke`、`rtl-e2e-trace` | ✅ 已接入 |
+| verilator_coverage | 5.032 | line/toggle 覆盖率分析、annotate、合并 | `make rtl-e2e-cov`（产物 `/tmp/dsc_cov/`） | ✅ 已接入 |
+| slang | 11.0.0 | SV elaborate/lint | `make rtl-slang` | ✅ 已接入 |
+| slang-server | 0.2.10 | `.sv/.svh/.v/.vh` LSP（经 systemverilog-lsp 插件） | Claude Code `LSP` 工具；索引配置 `.slang/server.json` | ✅ 已接入 |
+| clangd | 21.1.8 | C model LSP | `LSP` 工具；`compile_commands.json` 由 `make model-compile-commands`（bear）生成 | ✅ 已接入 |
+| bear | 3.1.6 | 拦截编译生成 compile_commands.json | `make model-compile-commands` | ✅ 已接入 |
+| gtkwave | 3.3.126 | VCD 波形查看 | `make rtl-e2e-trace` 后 `gtkwave tests/verilator/generated/rtl_e2e_trace.vcd` | ✅ 已接入 |
+| gcc/g++ | 15.2 | C model + function model DPI | `make model` | ✅ 已接入 |
+| make | 4.4.1 | 构建 | 全部 target | ✅ 已接入 |
+| python3 | 3.14.4 | golden 向量生成/回归脚本 | `make golden`、`make model-regression` | ✅ 已接入 |
+| verdi | — | 商业波形/调试 | — | ⛔ 未装（blocked） |
+
+**blocked 判据**：`which` 找不到 → blocked；版本 probe 失败 → blocked；存在但项目未接通 →
+not-wired，需先验证再使用。工具状态是快照、会漂移，使用前先 probe。
+
+**LSP 已知限制**：systemverilog-lsp 的 `workspaceSymbol` 跨文件搜索在 Claude Code 前端有解析
+bug（`l.location.range.start` undefined）；跨文件导航用 `findReferences`/`goToDefinition`，
+跨文件搜索用 grep 兜底。`LSP` 工具位置参数是 1-based 字符偏移，symbol 定位需先 Read 数准列。
+
+**VCD 波形**：`make rtl-e2e-trace`（`--trace --trace-depth 5`）产出
+`tests/verilator/generated/rtl_e2e_trace.vcd`（已 gitignore）。层次：
+`tb_dsc_e2e.dsc_encoder.dsce_engine_inst.gen_slice[*].dsce_slice_inst`。
+
+**覆盖率**：`make rtl-e2e-cov` 全链路（golden → coverage 编译 → 仿真 → `verilator_coverage
+--annotate`），产物全在 `/tmp/dsc_cov/` 不污染工作区。看盲区：
+`grep '%000000' /tmp/dsc_cov/annotate/dsce_*.sv`；`COV_DIR` 可覆盖以跑多配置，再用
+`verilator_coverage a.dat b.dat --write-merged merged.dat` 合并。
 
 ## 仿真假设
 
