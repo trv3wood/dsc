@@ -327,6 +327,24 @@
      竞争,奇数行末组事务丢失。修复方向:核对 flat_flags flush 输出的事务数/时序与
      行末组数对齐,或调度器在 flush 突发时不丢事务。
 
+  **2026-08-19 二次定位(修正)**:更深层分析把根因收敛到 **`dsce_slice_buffer`
+  的 write 侧只处理 72 行(输入 108 行)**。逐级握手指数(可靠,非内部信号):
+  1. `partition` 向 processor0 输出 **108 行 last**(`axi_last_out[0]`=108,axi 域握手),
+     每行 12 word → slice buffer 输入握手 `in_valid=1296 / in_last=108`(正确收到 108 行)。
+  2. `slice buffer` 输出仅 **`out_valid=1152 / out_last=72`**(72 行 × 16 组)。
+     36 行在 write→read 之间丢失。
+  3. VCD 时序:slice buffer 的 `i_axi_waddr` 在 68915000 后不再变化(write 只写到 72 行),
+     但输入 `axi_tvalid_in` 持续到 108 行;无 `axi_overflow`、无 backpressure 停摆。
+  4. read 侧在 72 行后 `pipeline_state=BUFFER_EMPTY`、`i_dsc_write_ready=0` 等待,
+     但 write 侧未再推进 → **read 永久等待**。
+  5. 之前 `i_valid_pd` 16/15 交替与 bpvector `i_cur_x=42` 均为该 72 行错位的**下游表现**:
+     行数错位导致奇数行末组用错 BP 重建,line1 末组 VLC 编码错(word22 首差)。
+
+  **修复方向(未完成)**:`dsce_slice_buffer` 的 write 侧在 72 行后停止推进 waddr,
+  而输入仍有效。需定位 write 地址/ready 在 72 行后停的机制(疑似 write 侧行计数或
+  `i_axi_write_ready` 跨时钟同步与 read 启动的时序竞争)。该模块内部时序分析耗时
+  巨大,列为专项待续。
+
 - **大 slice 的 format buffer 容量不足(ms2_192)**:g1(96 宽 slice)encoder 在
   ~1824/2592 words 提前停(stream_builder FIFO + format RAM 256 深,在 mux 读门控
   下无法容纳整 slice 输出 → encoder 早停 → 早进 PAD → 截断)。且 g0 先完成 PAD、
