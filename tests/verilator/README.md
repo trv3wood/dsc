@@ -280,7 +280,8 @@ make rtl-bp-replay                     # 0 失配
 ## 调试操作手册
 
 本节是 DSC 专属的操作参考；通用调试纪律见
-`.claude/skills/debug-rtl-by-golden-diff/SKILL.md`。
+`.claude/skills/debug-rtl-by-golden-diff/SKILL.md`，RTL/C 跨文件导航的 LSP
+操作纪律见 `.claude/skills/lsp-navigation/SKILL.md`。
 
 ### 快速命令
 
