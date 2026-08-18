@@ -142,6 +142,26 @@ module tb_dsc_e2e_multi;
             mux_last_ok++;
     end
 
+    // 逐 processor 捕获 muxword 流到文件，供离线与 C model 对比定位编码/交织问题。
+    integer       proc_mw_file [kSPC];
+    int           proc_mw_count [kSPC];
+    initial begin
+        for (int gfi = 0; gfi < kSPC; gfi++) begin
+            proc_mw_file[gfi] = $fopen($sformatf("tests/verilator/generated/proc%0d_muxwords.hex", gfi), "w");
+            if (proc_mw_file[gfi] == 0) $fatal(1, "无法创建 proc muxword 文件 g=%0d", gfi);
+        end
+    end
+    always @(posedge axi_clk) begin : ProcMuxCapture
+        for (int gp = 0; gp < kSPC; gp++) begin
+            if (async_reset_n && dut.dsce_engine_inst.i_axi_ready[gp] &&
+                dut.dsce_engine_inst.i_axi_accept[gp] &&
+                proc_mw_count[gp] < 16384) begin
+                $fwrite(proc_mw_file[gp], "%012x\n", dut.dsce_engine_inst.i_axi_muxword[gp][47:0]);
+                proc_mw_count[gp]++;
+            end
+        end
+    end
+
     // AXI 输出（bypass 后，每拍 6 bytes 位于低位 48 bit）逐字节比对。
     always @(posedge axi_clk) begin : TopScoreboard
         if (async_reset_n && axi_tvalid_out && axi_tready_out) begin
@@ -186,6 +206,156 @@ module tb_dsc_e2e_multi;
 
     always @(posedge axi_clk)
         if (async_reset_n && axi_tvalid_in && axi_tready_in) accepted_input++;
+
+    // 停摆 watchdog：mux 向选中 slice 持续 ready 但 tvalid 长期为低时，
+    // 转储各 slice 的 format/slice_buffer 内部状态，定位编码停摆点。
+    int stall_wait_cycles = 0;
+    int stall_dumped = 0;
+    // 周期性打印各 slice 的 format/slice_buffer 进展，观察编码推进与停摆位置。
+    int prog_tick = 0;
+    always @(posedge axi_clk) begin : ProgProbe
+        if (!async_reset_n) prog_tick <= 0;
+        else prog_tick <= prog_tick + 1;
+        if (prog_tick[9:0] == 10'd0 && async_reset_n) begin
+            $display("DET t=%0d g0=%0d/%0d/%0d/%0d/%0d/%0d/%0d/%0d | g1=%0d/%0d/%0d/%0d/%0d/%0d/%0d/%0d",
+                     $time,
+                     dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_axi_out_count,
+                     dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_dsc_write_count,
+                     dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_axi_raddr,
+                     dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_axi_waddr,
+                     dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_read_state,
+                     dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_slice_buffer_inst.dsc_start_of_slice,
+                     dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_slice_buffer_inst.i_dsc_write_ready,
+                     dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_slice_buffer_inst.i_pipeline_state,
+                     dut.dsce_engine_inst.gen_slice[1].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_axi_out_count,
+                     dut.dsce_engine_inst.gen_slice[1].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_dsc_write_count,
+                     dut.dsce_engine_inst.gen_slice[1].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_axi_raddr,
+                     dut.dsce_engine_inst.gen_slice[1].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_axi_waddr,
+                     dut.dsce_engine_inst.gen_slice[1].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_read_state,
+                     dut.dsce_engine_inst.gen_slice[1].dsce_slice_inst.dsce_slice_buffer_inst.dsc_start_of_slice,
+                     dut.dsce_engine_inst.gen_slice[1].dsce_slice_inst.dsce_slice_buffer_inst.i_dsc_write_ready,
+                     dut.dsce_engine_inst.gen_slice[1].dsce_slice_inst.dsce_slice_buffer_inst.i_pipeline_state);
+        end
+    end
+
+    // dump proc0 format AXI 侧每拍信号，分析 chunk 边界处丢失 word 的机制。
+    integer fbd_file;
+    initial fbd_file = $fopen("tests/verilator/generated/fmt_boundary.log", "w");
+    always @(posedge axi_clk) begin : FmtBoundaryDump
+        if (async_reset_n && dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.axi_tvalid_out &&
+            dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.axi_tready_out)
+            $fwrite(fbd_file, "out=%0d st=%0d raddr=%0d ren=%0b data=%012x\n",
+                dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_axi_out_count,
+                dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_read_state,
+                dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_axi_raddr,
+                dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_axi_ren,
+                dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.axi_muxword_out[47:0]);
+    end
+
+    // 捕获 slice_mux 原生输出流 + 当时选中的 slice/状态，离线对照 golden payload。
+    integer smx_file;
+    initial smx_file = $fopen("tests/verilator/generated/mux_stream.log", "w");
+    always @(posedge axi_clk) begin : MuxStreamDump
+        if (async_reset_n && dut.dsce_engine_inst.i_axi_tvalid_mux &&
+            dut.dsce_engine_inst.i_axi_tready_mux)
+            $fwrite(smx_file, "sel=%0d st=%0d last_ok=%0b data=%012x\n",
+                dut.dsce_engine_inst.dsce_slice_mux_inst.i_slice_select,
+                dut.dsce_engine_inst.dsce_slice_mux_inst.i_slice_state,
+                dut.dsce_engine_inst.dsce_slice_mux_inst.i_last_in,
+                dut.dsce_engine_inst.i_axi_tdata_mux[47:0]);
+    end
+
+    always @(posedge axi_clk) begin : StallWatchdog
+        if (!async_reset_n) begin
+            stall_wait_cycles <= 0;
+            stall_dumped <= 0;
+        end else if (dut.axi_encoder_enable &&
+                     dut.dsce_engine_inst.dsce_slice_mux_inst.i_valid_in == 1'b0 &&
+                     dut.dsce_engine_inst.dsce_slice_mux_inst.i_ready_in == 1'b1) begin
+            stall_wait_cycles <= stall_wait_cycles + 1;
+            if (stall_wait_cycles == 500 && !stall_dumped) begin
+                stall_dumped <= 1;
+                $display("STALL mux_select=%0d mux_state=%0d ready_in=%0b valid_in=%0b tready_out=%0b",
+                         dut.dsce_engine_inst.dsce_slice_mux_inst.i_slice_select,
+                         dut.dsce_engine_inst.dsce_slice_mux_inst.i_slice_state,
+                         dut.dsce_engine_inst.dsce_slice_mux_inst.i_ready_in,
+                         dut.dsce_engine_inst.dsce_slice_mux_inst.i_valid_in,
+                         dut.dsce_engine_inst.dsce_slice_mux_inst.axi_tready_out);
+                // gen_slice[g] 层级索引须为常量，手动展开 kSPC=4。
+                for (int gd = 0; gd < 4; gd++) begin
+                    case (gd)
+                        0: $display("STALL_SLICE g=0 fmt_state=%0d fmt_out=%0d fmt_waddr=%0d fmt_raddr=%0d fmt_pause=%0b fmt_tvalid=%0b fmt_idle=%0b | slb_wrdy=%0b slb_pipe=%0d slb_rstate=%0d slb_raddr=%0d slb_waddr=%0d slb_valid=%0b slb_last=%0b slb_sos=%0b",
+                                    dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_read_state,
+                                    dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_axi_out_count,
+                                    dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_dsc_waddr,
+                                    dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_axi_raddr,
+                                    dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_axi_pause_chunk,
+                                    dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.axi_tvalid_out,
+                                    dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_axi_write_idle,
+                                    dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_slice_buffer_inst.i_dsc_write_ready,
+                                    dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_slice_buffer_inst.i_pipeline_state,
+                                    dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_slice_buffer_inst.i_read_state,
+                                    dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_slice_buffer_inst.i_dsc_raddr,
+                                    dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_slice_buffer_inst.i_axi_waddr,
+                                    dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_slice_buffer_inst.dsc_valid_out,
+                                    dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_slice_buffer_inst.dsc_last_out,
+                                    dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_slice_buffer_inst.dsc_start_of_slice);
+                        1: $display("STALL_SLICE g=1 fmt_state=%0d fmt_out=%0d fmt_waddr=%0d fmt_raddr=%0d fmt_pause=%0b fmt_tvalid=%0b fmt_idle=%0b | slb_wrdy=%0b slb_pipe=%0d slb_rstate=%0d slb_raddr=%0d slb_waddr=%0d slb_valid=%0b slb_last=%0b slb_sos=%0b",
+                                    dut.dsce_engine_inst.gen_slice[1].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_read_state,
+                                    dut.dsce_engine_inst.gen_slice[1].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_axi_out_count,
+                                    dut.dsce_engine_inst.gen_slice[1].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_dsc_waddr,
+                                    dut.dsce_engine_inst.gen_slice[1].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_axi_raddr,
+                                    dut.dsce_engine_inst.gen_slice[1].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_axi_pause_chunk,
+                                    dut.dsce_engine_inst.gen_slice[1].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.axi_tvalid_out,
+                                    dut.dsce_engine_inst.gen_slice[1].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_axi_write_idle,
+                                    dut.dsce_engine_inst.gen_slice[1].dsce_slice_inst.dsce_slice_buffer_inst.i_dsc_write_ready,
+                                    dut.dsce_engine_inst.gen_slice[1].dsce_slice_inst.dsce_slice_buffer_inst.i_pipeline_state,
+                                    dut.dsce_engine_inst.gen_slice[1].dsce_slice_inst.dsce_slice_buffer_inst.i_read_state,
+                                    dut.dsce_engine_inst.gen_slice[1].dsce_slice_inst.dsce_slice_buffer_inst.i_dsc_raddr,
+                                    dut.dsce_engine_inst.gen_slice[1].dsce_slice_inst.dsce_slice_buffer_inst.i_axi_waddr,
+                                    dut.dsce_engine_inst.gen_slice[1].dsce_slice_inst.dsce_slice_buffer_inst.dsc_valid_out,
+                                    dut.dsce_engine_inst.gen_slice[1].dsce_slice_inst.dsce_slice_buffer_inst.dsc_last_out,
+                                    dut.dsce_engine_inst.gen_slice[1].dsce_slice_inst.dsce_slice_buffer_inst.dsc_start_of_slice);
+                        2: $display("STALL_SLICE g=2 fmt_state=%0d fmt_out=%0d fmt_waddr=%0d fmt_raddr=%0d fmt_pause=%0b fmt_tvalid=%0b fmt_idle=%0b | slb_wrdy=%0b slb_pipe=%0d slb_rstate=%0d slb_raddr=%0d slb_waddr=%0d slb_valid=%0b slb_last=%0b slb_sos=%0b",
+                                    dut.dsce_engine_inst.gen_slice[2].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_read_state,
+                                    dut.dsce_engine_inst.gen_slice[2].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_axi_out_count,
+                                    dut.dsce_engine_inst.gen_slice[2].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_dsc_waddr,
+                                    dut.dsce_engine_inst.gen_slice[2].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_axi_raddr,
+                                    dut.dsce_engine_inst.gen_slice[2].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_axi_pause_chunk,
+                                    dut.dsce_engine_inst.gen_slice[2].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.axi_tvalid_out,
+                                    dut.dsce_engine_inst.gen_slice[2].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_axi_write_idle,
+                                    dut.dsce_engine_inst.gen_slice[2].dsce_slice_inst.dsce_slice_buffer_inst.i_dsc_write_ready,
+                                    dut.dsce_engine_inst.gen_slice[2].dsce_slice_inst.dsce_slice_buffer_inst.i_pipeline_state,
+                                    dut.dsce_engine_inst.gen_slice[2].dsce_slice_inst.dsce_slice_buffer_inst.i_read_state,
+                                    dut.dsce_engine_inst.gen_slice[2].dsce_slice_inst.dsce_slice_buffer_inst.i_dsc_raddr,
+                                    dut.dsce_engine_inst.gen_slice[2].dsce_slice_inst.dsce_slice_buffer_inst.i_axi_waddr,
+                                    dut.dsce_engine_inst.gen_slice[2].dsce_slice_inst.dsce_slice_buffer_inst.dsc_valid_out,
+                                    dut.dsce_engine_inst.gen_slice[2].dsce_slice_inst.dsce_slice_buffer_inst.dsc_last_out,
+                                    dut.dsce_engine_inst.gen_slice[2].dsce_slice_inst.dsce_slice_buffer_inst.dsc_start_of_slice);
+                        3: $display("STALL_SLICE g=3 fmt_state=%0d fmt_out=%0d fmt_waddr=%0d fmt_raddr=%0d fmt_pause=%0b fmt_tvalid=%0b fmt_idle=%0b | slb_wrdy=%0b slb_pipe=%0d slb_rstate=%0d slb_raddr=%0d slb_waddr=%0d slb_valid=%0b slb_last=%0b slb_sos=%0b",
+                                    dut.dsce_engine_inst.gen_slice[3].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_read_state,
+                                    dut.dsce_engine_inst.gen_slice[3].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_axi_out_count,
+                                    dut.dsce_engine_inst.gen_slice[3].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_dsc_waddr,
+                                    dut.dsce_engine_inst.gen_slice[3].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_axi_raddr,
+                                    dut.dsce_engine_inst.gen_slice[3].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_axi_pause_chunk,
+                                    dut.dsce_engine_inst.gen_slice[3].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.axi_tvalid_out,
+                                    dut.dsce_engine_inst.gen_slice[3].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_axi_write_idle,
+                                    dut.dsce_engine_inst.gen_slice[3].dsce_slice_inst.dsce_slice_buffer_inst.i_dsc_write_ready,
+                                    dut.dsce_engine_inst.gen_slice[3].dsce_slice_inst.dsce_slice_buffer_inst.i_pipeline_state,
+                                    dut.dsce_engine_inst.gen_slice[3].dsce_slice_inst.dsce_slice_buffer_inst.i_read_state,
+                                    dut.dsce_engine_inst.gen_slice[3].dsce_slice_inst.dsce_slice_buffer_inst.i_dsc_raddr,
+                                    dut.dsce_engine_inst.gen_slice[3].dsce_slice_inst.dsce_slice_buffer_inst.i_axi_waddr,
+                                    dut.dsce_engine_inst.gen_slice[3].dsce_slice_inst.dsce_slice_buffer_inst.dsc_valid_out,
+                                    dut.dsce_engine_inst.gen_slice[3].dsce_slice_inst.dsce_slice_buffer_inst.dsc_last_out,
+                                    dut.dsce_engine_inst.gen_slice[3].dsce_slice_inst.dsce_slice_buffer_inst.dsc_start_of_slice);
+                        default: ;
+                    endcase
+                end
+            end
+        end else begin
+            stall_wait_cycles <= 0;
+        end
+    end
 
     // 以 <case> 名读取向量文件；空则使用 generated/。
     string  base_path;
@@ -320,6 +490,8 @@ module tb_dsc_e2e_multi;
 
         $display("RESULT accepted=%0d out=%0d top_mis=%0d top_excess=%0d mux=%0d mux_mis=%0d",
                  accepted_input, out_count, top_mis, top_excess, mux_count, mux_mis);
+        $display("PROC_MW cnt=%0d/%0d/%0d/%0d",
+                 proc_mw_count[0], proc_mw_count[1], proc_mw_count[2], proc_mw_count[3]);
         $display("DIAG partition_v=%0d/%0d/%0d/%0d mux_ready=%0d/%0d/%0d/%0d last_in=%0d/%0d/%0d/%0d select_chg=%0d new_frame=%0d",
                  part_valid[0], part_valid[1], part_valid[2], part_valid[3],
                  mux_ready[0], mux_ready[1], mux_ready[2], mux_ready[3],

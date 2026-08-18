@@ -138,7 +138,11 @@ module dsce_format_buffer
         axi_muxword_out = (i_read_state == kRS_DATA_PAD) ? 64'd0 : i_axi_muxword;
 
         i_axi_waddr = dsce_gray_code_to_binary_8(i_axi_waddr_gc);
-        i_axi_ren = (i_axi_read_init == 1'b1 || (axi_tvalid_out == 1'b1 && axi_tready_out == 1'b1 && i_read_state == kRS_DATA_READY)) ? 1'b1 : 1'b0;
+        // 读使能：仅当真是从 RAM 取回一个数据字时拉高。kRS_DATA_INIT 的 read_init
+        // 是首字的双段握手,其后的 kRS_XMIT_DELAY 因 chunk PAUSE 不读。
+        i_axi_ren = (i_axi_read_init == 1'b1 ||
+                     (axi_tvalid_out == 1'b1 && axi_tready_out == 1'b1 &&
+                      i_read_state == kRS_DATA_READY)) ? 1'b1 : 1'b0;
         i_axi_raddr_p1 = i_axi_raddr + 8'd1;
         i_axi_start_of_frame = (i_axi_frame_toggle[1] != i_axi_frame_toggle[0]) ? 1'b1 : 1'b0;
 

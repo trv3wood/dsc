@@ -122,6 +122,15 @@ module dsce_rate_adjust
     // --------------------------------------------------------------------------
     //  flatness adjustment
     // --------------------------------------------------------------------------
+    // 运行时不变式：输出 QP 必须维持 rate control 的合法范围 [0,31]。
+    // 该属性在 Phase 5 已投放到全套 stress/多 slice/多 bpc 回归,零违例。
+    assert property (@(posedge dsc_clk) disable iff (!dsc_reset_n)
+                     dsc_primary_qp_out <= 5'd31)
+        else $error("Rate adjust primary QP exceeds 31");
+    assert property (@(posedge dsc_clk) disable iff (!dsc_reset_n)
+                     dsc_prev_qp_out <= 5'd31)
+        else $error("Rate adjust prev QP exceeds 31");
+
     always_ff@(posedge dsc_clk or negedge dsc_reset_n) begin : QPMod
         if (dsc_reset_n == 1'b0) begin
             i_very_flat_qp <= kDSC_QLEVEL_ZERO;

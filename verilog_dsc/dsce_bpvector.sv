@@ -111,7 +111,8 @@ module dsce_bpvector
 
         for (int ci = 0; ci < 9; ci++) begin
             logic [15:0] total;
-            int candidate = (ci == 0) ? 0 : ci + 1;
+            int candidate;
+            candidate = (ci == 0) ? 0 : (ci + 1);
             total = 16'd0;
             for (int pos = 0; pos < 9; pos++) begin
                 logic [15:0] pred_y, pred_co, pred_cg;

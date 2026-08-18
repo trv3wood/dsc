@@ -178,6 +178,10 @@ module dsce_stream_fifo
             assert (dsc_muxword_valid_in == 1'b0 || i_muxword_full == 1'b0 ||
                     i_muxword_read == 1'b1)
                 else $error("Muxword FIFO overflow");
+            // muxword FIFO 写不越过读指针:写满阈值(write+1==read 且本拍无读)即为
+            // full,读观察在写之前,故写使能时指针必不相等、不会单拍越过。
+            assert (dsc_muxword_valid_in == 1'b0 || i_muxword_full == 1'b0)
+                else $error("Muxword FIFO write-into-full");
         end // if
     end : FlowControlBuffers
 

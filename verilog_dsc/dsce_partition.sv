@@ -137,5 +137,13 @@ module dsce_partition
         end // if
     end : SliceSteering
 
+// 运行时不变式：slice 选择位必须单热(轮转映射不产生多路同时有效)。
+    assert property (@(posedge axi_clk) disable iff (!axi_reset_n || !axi_pps_update)
+                     $onehot(i_slice_select))
+        else $error("Partition slice_select not one-hot");
+    assert property (@(posedge axi_clk) disable iff (!axi_reset_n)
+                     !(axi_valid_in && axi_pps_update) || $onehot(i_slice_select))
+        else $error("Partition slice_select not one-hot at pps update");
+
 endmodule : dsce_partition
 

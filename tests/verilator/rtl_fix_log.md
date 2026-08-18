@@ -239,3 +239,56 @@
 - `make rtl-e2e-multi MULTI_CASE=ms2`：FAIL，13337 个顶层字节失配。
 
 因此，更准确的结论是：flatness、MPP/ICH/VLC 时序、QP 对齐和 BP 的核心方向已经让两个固定单-slice用例真正通过；但 BP 多位深/非 RGB、format buffer 长度、backpressure 和多 slice 仍未修复，当前不应把 [rtl_fix_log.md](/home/zys/Project/dsc/tests/verilator/rtl_fix_log.md:1) 描述为“RTL 缺陷已整体修复”。
+
+
+## 多 slice 缺陷定位修正(2026-08-18,已收敛证据)
+
+此前把 ms2 首因列为 `dsce_partition` 列映射(上文第 2 条)。本轮用逐 processor 捕获
+`i_axi_muxword_out`(tb 写 `proc0/proc1_muxwords.hex`)对拍 C model 的
+`c_mux_trace.txt` per-slice 流,修正定位:
+
+- **partition 列分配正确**:两个 processor 各收到自己的整条 slice 列
+  (`part_valid=1296/1296`,像素未混),mux 切换正常(`select_chg=138`)。
+- **首个差异在 `dsce_format_buffer` 的 chunk 边界多读**:
+  - proc0 的 chunk0 = golden slice0 chunk0(12 字逐字一致),chunk0 后第 13 字起
+    与 golden slice0 错位 1 字,且每个 chunk 边界后持续错位;
+  - `fmt_boundary.log` 显示 chunk 边界拍 `raddr` 从 12 跳到 14,即同一拍
+    `i_axi_ren` 驱动两次 RAM 读(多读一个已写满的 word)。
+  - 根因:`i_axi_chunk_boundary` 判"本字是 chunk 尾"后转 `kRS_XMIT_DELAY` PAUSE,
+    但组合 `i_axi_ren` 在该边界拍仍因 `axi_tvalid_out&&axi_tready_out` 为真而拉高,
+    推进两个地址。
+- 尝试收紧 `i_axi_ren` 为"仅 READY 真握手才读"时,proc0/1 的 `i_axi_out_count`
+  与 72 字节/chunk 对齐,方向正确;但引入 ms2 另一处停摆(`mux` 停在
+  `sel=1 kSST_STALLED`、`g1 fmt_state=4 kRS_DATA_PAD`、`fmt_raddr/waddr=106`),
+  即 chunk 边界 `axi_last_out` 时机与 slice_mux 状态机配合仍未闭合。该收紧已回退,
+  保持原 RTL 语义避免引入回归。
+
+**结论**:multi-slice 收敛需把 `dsce_format_buffer` 的 chunk-last 时机与
+`dsce_slice_mux` 的 PRIME/LAST 状态机齐调(单 slice 路径不受影响)。本轮新增诊断探针
+(proc muxword 捕获、STALL watchdog、DET 进展、fmt_boundary/mux_stream 离线 dump)
+保留在 `tb_dsc_e2e_multi.sv`。
+
+### 本轮保留的 RTL SVA/断言资产(Phase 5,单 slice 回归零违例)
+
+- `dsce_partition`:`assert property ($onehot(i_slice_select))`(多 slice 轮转映射
+  单热不变式)。
+- `dsce_rate_adjust`:primary/prev QP ≤ 31 范围断言。
+- `dsce_stream_fifo`:muxword FIFO write-into-full 断言。
+- `dsce_bpvector`:修复 `int candidate` 自动变量被静态初始化引用的 slang 错误
+  (语义不变,纯 lint 修复,`make rtl-slang` 2 errors → 0)。
+- 全部经 `rtl-e2e`(默认 + 0x1234)、`rtl-flatness-replay`、`rtl-smoke`、`rtl-slang`、
+  `rtl-lint` 复跑 PASS / 0 errors。
+
+### 多 slice 专项(未收敛)
+
+- ms2:输出 13446/15552(`mux_count`),首失配 mux byte 7;proc0/1 各自截断到
+  `11/12` 每 chunk。
+- 修复方向:format buffer chunk 边界 last 与 slice_mux 时序齐修;分区列映射不动。
+- 验收:ms2 + ms2_192 逐字节一致 + ≥1 不同 seed + 随机背压/空泡。
+
+本次复跑结果(默认基线保持绿):
+
+- `make rtl-e2e`:PASS,15552 bytes 零失配(带全部新断言)。
+- `make rtl-slang`:Build succeeded 0 errors。
+- `make rtl-lint`:无错误。
+- `make rtl-e2e-multi MULTI_CASE=ms2`:FAIL,13446/15552(证据收集完保留,未误报收敛)。
