@@ -1,4 +1,4 @@
-.PHONY: golden images model model-clean model-run model-4k model-regression rtl-clean rtl-e2e rtl-e2e-trace rtl-e2e-multi rtl-flatness-replay rtl-lint rtl-slang rtl-smoke
+.PHONY: golden images model model-clean model-run model-4k model-regression model-compile-commands rtl-clean rtl-e2e rtl-e2e-trace rtl-e2e-multi rtl-flatness-replay rtl-lint rtl-slang rtl-smoke
 
 GOLDEN_SEED ?= 0x445343
 GOLDEN_PATTERN ?= random
@@ -27,6 +27,11 @@ model-4k: images model
 
 model-regression: model
 	python3 tools/run_dsc_regression.py --parallel $(REGRESSION_PARALLEL) --quick
+
+# 用 bear 拦截 model 构建，生成 compile_commands.json 供 clangd LSP 使用。
+# clean 强制重编，确保 bear 记录到全部编译命令。
+model-compile-commands:
+	bear -- make -C model/src clean dsc
 
 rtl-lint:
 	verilator --lint-only --timing -Wall -Wno-fatal \

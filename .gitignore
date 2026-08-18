@@ -1,6 +1,7 @@
 # C 参考模型构建产物
 model/src/*.o
 model/src/dsc
+compile_commands.json
 
 # 参考模型运行产物
 model/testdata/
@@ -23,3 +24,6 @@ tests/verilator/generated/
 # Python 缓存
 __pycache__/
 *.pyc
+
+# clangd 索引缓存
+.cache/
