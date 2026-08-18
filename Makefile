@@ -1,4 +1,4 @@
-.PHONY: golden images model model-clean model-run model-4k model-regression rtl-clean rtl-e2e rtl-e2e-multi rtl-e2e-flat-model rtl-e2e-vlc-model rtl-e2e-bp-model rtl-e2e-bp-mpp-model rtl-e2e-bp-vlc-model rtl-e2e-bp-ich-model rtl-vlc-capture rtl-vlc-capture-bp-model rtl-vlc-replay rtl-vlc-replay-bp-model rtl-flatness-replay rtl-lint rtl-slang rtl-smoke
+.PHONY: golden images model model-clean model-run model-4k model-regression rtl-clean rtl-e2e rtl-e2e-trace rtl-e2e-multi rtl-e2e-flat-model rtl-e2e-vlc-model rtl-e2e-bp-model rtl-e2e-bp-mpp-model rtl-e2e-bp-vlc-model rtl-e2e-bp-ich-model rtl-vlc-capture rtl-vlc-capture-bp-model rtl-vlc-replay rtl-vlc-replay-bp-model rtl-flatness-replay rtl-lint rtl-slang rtl-smoke
 
 GOLDEN_SEED ?= 0x445343
 GOLDEN_PATTERN ?= random
@@ -52,6 +52,19 @@ rtl-e2e: golden
 		--top-module tb_dsc_e2e -f tests/verilator/rtl.f \
 		tests/verilator/tb_dsc_e2e.sv
 	./obj_dir/Vtb_dsc_e2e
+
+# 同 rtl-e2e，但启用 VCD 波形 dump（DSC_VCD_DUMP 由 tb 在 ifdef 内开启），供 gtkwave 查看。
+rtl-e2e-trace: golden
+	verilator --binary --timing --assert -Wall -Wno-fatal \
+		-Wno-WIDTH -Wno-UNUSED -Wno-IMPORTSTAR -Wno-PINCONNECTEMPTY \
+		-Wno-BLKSEQ -Wno-DECLFILENAME -Wno-GENUNNAMED -Wno-MULTIDRIVEN \
+		-Wno-TIMESCALEMOD -DDSC_VCD_DUMP \
+		--trace --trace-depth 5 \
+		--top-module tb_dsc_e2e -f tests/verilator/rtl.f \
+		tests/verilator/tb_dsc_e2e.sv
+	./obj_dir/Vtb_dsc_e2e
+	@echo "VCD 波形已生成: tests/verilator/generated/rtl_e2e_trace.vcd"
+	@echo "用 gtkwave 打开: gtkwave tests/verilator/generated/rtl_e2e_trace.vcd"
 
 # 多 slice / 多分辨率 e2e。向量由 generate_golden.py 生成；MULTI_CASE 指定用例名
 #（如 ms2、ms2_192；缺省读 generated/ 单 slice）。多 slice 交织缺陷见 rtl_fix_log.md。

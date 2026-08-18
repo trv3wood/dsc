@@ -277,6 +277,110 @@ make rtl-flatness-replay               # 0 失配
 make rtl-bp-replay                     # 0 失配
 ```
 
+## 调试操作手册
+
+本节是 DSC 专属的操作参考；通用调试纪律见
+`.claude/skills/debug-rtl-by-model-substitution/SKILL.md`。
+
+### 快速命令
+
+    make rtl-e2e                                  # 默认 seed 0x445343；PASS = 15552 bytes 逐字节一致
+    make rtl-e2e GOLDEN_SEED=0x1234               # 换 seed
+    make rtl-e2e GOLDEN_PATTERN=flatness          # 覆盖 flatness 决策
+    ./obj_dir/Vtb_dsc_e2e +STOP_FIRST_BOUNDARY    # 首个 group 边界失配停表（$fatal）
+    grep -E "MISMATCH|VLC_INPUT|FLAT_SOURCE" <log> # 找首差异
+    make rtl-e2e-trace                            # 产出 VCD，gtkwave 打开
+
+### RTL 打点词典（tb_dsc_e2e.sv 的 $display）
+
+从 `./obj_dir/Vtb_dsc_e2e` 的 stdout 抓取，按流水阶段分组。配 `+STOP_FIRST_BOUNDARY` 的
+`VLC_INPUT_*_MISMATCH` 是最上游的可停表入口。
+
+**输出端（AXI 域）**
+
+| 打点 | 内容 |
+|---|---|
+| `MISMATCH byte=N expected=.. actual=.. word=...` | 前 8 个**最终 payload 字节失配** |
+| `MUX_MISMATCH byte=N expected=.. actual=..` | 前 8 个 **bypass 前**字节失配（区分编码错 vs 重打包错） |
+| `MUX_VALID[N] ready=.. data=.. bypass_ready=..`、`MUX[N]=...` | slice mux 输出与 backpressure |
+| `TOP[N]=...` | 前 24 个顶层 AXI 输出码字 |
+
+**format / stream-builder**
+
+| 打点 | 内容 |
+|---|---|
+| `SSP_MISMATCH ssp word expected actual` | 每 SSP 前 4 个 muxword 失配 |
+| `VLC_MISMATCH ssp fragment expected actual` | 每 SSP 前 4 个 VLC 片段 `{size,data}` 失配 |
+| `PRE_RAM_MISMATCH byte expected actual` | 前 8 个入 RAM 前字节失配 |
+
+**VLC 输入边界（group 级；`+STOP_FIRST_BOUNDARY` 可停表）**
+
+| 打点 | 内容 |
+|---|---|
+| `VLC_INPUT_RESIDUAL_MISMATCH group=N` | 非 ICH 组残差 vs `group_residual_expected.hex` |
+| `VLC_INPUT_PREDICTED_MISMATCH group=N` | `i_vlc_size_dec` vs `group_predicted_expected.hex` |
+| `VLC_INPUT_QP_MISMATCH group=N expected actual` | `i_primary_qp_res` vs `group_qp_expected.hex`，全组检查 |
+| `VLC_INPUT_ICH_MISMATCH` / `VLC_INPUT_ICH_INDEX_MISMATCH` | ICH 选择/index vs `group_ich_*.hex` |
+| `DECISION_BOUNDARY` / `DECISION_SAMPLE` / `PD group` | decision 输出边界与逐 sample 预测残差 |
+| `ICH_STABLE` / `ICH_RTL_COST` / `ICH_DBG(K)` | ICH 决策与 candidate 内部 |
+| `FLAT_ALIGNED_MISMATCH` | `i_vlc_flat_flags_aligned` vs `flatness_expected.hex` |
+
+**decision/flatness/rate 上游**
+
+| 打点 | 内容 |
+|---|---|
+| `FLAT_SOURCE_MISMATCH group ...` / `FLAT_SOURCE_PIXEL_MISMATCH` | `i_vlc_flat_flags_fd` vs `flatness_expected.hex` |
+| `FD group t st_qp prim_qp prev_qp ...` | rate_adjust 输入 |
+| `RATE_QP` / `RATE_RAW` / `RA_DBG` / `RATE group coded rc fullness ...` | 码控全内部状态 |
+| `MMAP_INPUT_Y/CO/CG` / `BP_RECON_FEEDBACK` | MMAP/BP 输入 |
+| `DECISION line group ...` / `RESIDUAL ...` | 前两行逐组 |
+
+**收尾/统计**：`PIPELINE`、`COMPARE`、`SSP words`、`VLC fragments`、`STATE`、`RESULT`、
+`PASS: RTL payload matches C model (15552 bytes)`。
+
+### C trace 字段对照（`tests/verilator/generated/c_*.txt`，`make golden` 重新生成）
+
+| 文件 | env | 对照 |
+|---|---|---|
+| `c_group_trace.txt` | `DSC_GROUP_TRACE` | 每 group 进 VLC 前 line/group/qp/ich/ichidx/bp/mpp/flatness + 每 unit 残差 u0..u2、pred0..2、err。对照 `VLC_INPUT_*` |
+| `c_rate_trace.txt` | `DSC_RATE_TRACE` | 码控 coded/rc/fullness/target/min/max/prev。对照 `RATE`/`RATE_QP` |
+| `c_vlc_trace.txt` | `DSC_VLC_TRACE` | 每 VLC 片段 ssp/group/size/data。对照 `VLC_MISMATCH` |
+| `c_mux_trace.txt` | `DSC_MUX_TRACE` | 每 muxword ssp/group/data。对照 `MUX_MISMATCH`/`SSP_MISMATCH` |
+| `c_mmap_trace.txt` | `DSC_MMAP_TRACE` | 预测采样 line/group/unit/q/current/prev/right。对照 `MMAP_INPUT_*` |
+
+### function-model 替换 target（升级路径）
+
+替换是调试手段不是默认流程；纪律见 SKILL.md"升级路径"。**不要用 value model 替换正在调时序的
+模块**（会消掉要抓的 bug）。
+
+| target | 替换模块 | define |
+|---|---|---|
+| `rtl-e2e-flat-model` | 行尾 flatness QP 调整 | `-DDSC_FLATNESS_MODEL_SUBSTITUTE` |
+| `rtl-e2e-vlc-model` | chroma ICH VLC 发射路径 | `-DDSC_VLC_MODEL_SUBSTITUTE` |
+| `rtl-e2e-bp-model` | 整个 BP vector/predict | `-DDSC_BPVECTOR_MODEL_SUBSTITUTE` |
+| `rtl-e2e-bp-mpp-model` | BP + MPP | 两个 define |
+| `rtl-e2e-bp-vlc-model` | BP + VLC | 两个 define |
+| `rtl-e2e-bp-ich-model` | BP + ICH | 两个 define |
+| `rtl-e2e-ich-model` | ICH | `-DDSC_ICH_MODEL_SUBSTITUTE` |
+| `rtl-vlc-capture` / `rtl-vlc-replay` | 抓 VLC 输入 trace / 独立 replay | `-DDSC_VLC_CAPTURE` |
+| `rtl-bp-capture` / `rtl-bp-replay` | 抓 BP trace / 独立 replay | `-DDSC_BP_CAPTURE` |
+| `rtl-flatness-replay` | flatness replay | `flatness` 图案 |
+
+function model 源文件均在 `tests/verilator/model/*.cpp`，adapter 在
+`verilog_dsc/dsce_*_function_model.sv`（`ifdef` 守护）。四情形判定表见 SKILL.md。
+
+### 工具与 blocked 判据
+
+- 可用：verilator 5.032（编译/仿真/波形，`make rtl-e2e-trace`）、slang 11.0.0（`make rtl-slang`
+  elaborate/lint）、gcc/g++ 15.2（C model + function model DPI）、make、python3、gtkwave 3.3.126
+  （`make rtl-e2e-trace` 后 `gtkwave tests/verilator/generated/rtl_e2e_trace.vcd`）。
+- 未接入：verdi（未装）、clangd（PATH 有但无 compile_commands.json，未接入）。
+- **blocked 判据**：`which` 找不到 → blocked；版本 probe 失败 → blocked；存在但项目未接通 →
+  not-wired，需先验证再使用。工具状态是快照、会漂移，使用前先 probe。
+- VCD：`make rtl-e2e-trace`（`--trace --trace-depth 5`）产出
+  `tests/verilator/generated/rtl_e2e_trace.vcd`（已 gitignore）。层次：
+  `tb_dsc_e2e.dsc_encoder.dsce_engine_inst.gen_slice[*].dsce_slice_inst`。
+
 ## 仿真假设
 
 原始 RTL 包不含 `gprim_sync_stage`、`gprim_sync2_stage` 和 `gram_bist_1r1w`。`support/` 提供仅用于仿真的模型：同步器保留一拍/两拍延迟，RAM 使用同步读写，BIST 不建模。这些模型不能替代工艺库 CDC、冲突语义或 BIST 签核。
