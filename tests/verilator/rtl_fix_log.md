@@ -279,16 +279,38 @@
 - 全部经 `rtl-e2e`(默认 + 0x1234)、`rtl-flatness-replay`、`rtl-smoke`、`rtl-slang`、
   `rtl-lint` 复跑 PASS / 0 errors。
 
-### 多 slice 专项(未收敛)
+### 多 slice 专项(2026-08-18 二次收敛:结构已通,剩内容/大 slice 容量)
 
-- ms2:输出 13446/15552(`mux_count`),首失配 mux byte 7;proc0/1 各自截断到
-  `11/12` 每 chunk。
-- 修复方向:format buffer chunk 边界 last 与 slice_mux 时序齐修;分区列映射不动。
-- 验收:ms2 + ms2_192 逐字节一致 + ≥1 不同 seed + 随机背压/空泡。
+**本轮结构修复(已提交 b0b4fa3,ms2 从 13440 卡死 → 15552 全帧、每 slice 1296 words):**
 
-本次复跑结果(默认基线保持绿):
+1. `dsce_format_buffer` 去掉 chunk 边界显式 PAUSE(原清零 tvalid 导致 1 拍 RAM
+   读延迟里的下一个 word 丢失,每 chunk 丢 1 字)。改为留在 kRS_DATA_READY 靠 mux
+   背压门控(ren 在 tready=0 时自然为 0、raddr 停住、RAM 保持),axi_last_out 仍通知
+   mux 切换。同时 axi_last_out 不再由 transient kRS_DATA_LAST(编码器追平)触发
+   (否则首字误发 last 让 mux 提前切 slice),并补 kRS_DATA_PAD 的 chunk 边界 last
+   (否则某 slice 提前 pad 时 mux 卡死)。
+2. `dsce_slice_mux` kSST_LAST 无条件 tvalid 重发尾字,chunk 尾字已在 NORMAL/PRIME
+   本拍被接受后仍进 LAST 重发一次(每 chunk 多 1 重复字)。改为尾字已接受
+   (tready_out=1)时直接进 kSST_HBLANK,仅未接受才进 LAST 保持。单 slice 因
+   axi_last_out 恒 0 从不进 LAST,不受影响。
 
-- `make rtl-e2e`:PASS,15552 bytes 零失配(带全部新断言)。
-- `make rtl-slang`:Build succeeded 0 errors。
-- `make rtl-lint`:无错误。
-- `make rtl-e2e-multi MULTI_CASE=ms2`:FAIL,13446/15552(证据收集完保留,未误报收敛)。
+单 slice 回归保持绿(rtl-e2e / flatness-replay / smoke / slang / lint)。
+
+**剩余两处(均为预存、与结构修复无关,已分别定位):**
+
+- **窄 slice 的 line-end VLC 内容分歧(ms2)**:proc0 在 chunk1(line1)第 10 个
+  muxword(word22)起与 golden 分歧并级联。经值搜索定位:word22 =
+  `740324b16bf1` = C trace `(ssp1, group15)`,即 **line1 的最后一个 group(像素
+  45-47,48 宽 slice 的末组)的 Co/Cg VLC 编码错**;line0 对应组正确、line1 其余
+  组正确,唯独 line1 末组错。RTL 的 VLC 片段化与 C model 不同(README 已知 RTL 合并
+  片段),片段级对比不可靠,需按 muxword 位级/group 输入(residual/qp/ich)定位
+  line1 末组的预测/重建输入。疑似窄 slice 行末 group 的右缘 look-ahead/上一行重建。
+
+- **大 slice 的 format buffer 容量不足(ms2_192)**:g1(96 宽 slice)encoder 在
+  ~1824/2592 words 提前停(stream_builder FIFO + format RAM 256 深,在 mux 读门控
+  下无法容纳整 slice 输出 → encoder 早停 → 早进 PAD → 截断)。且 g0 先完成 PAD、
+  g1 后完成时,mux 回到已完成且无数据的 g0 会卡死(两 slice 真实压缩长度不同是正常
+  的)。需:a) format buffer RAM/stream FIFO 对 encoder 施加真正背压(满则停),或
+  b) 增大 RAM,或 c) mux 对"已完成且无数据"的 slice 有跳转/结束机制。
+
+- 验收仍:ms2 + ms2_192 逐字节一致 + ≥1 不同 seed + 随机背压/空泡。
