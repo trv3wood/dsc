@@ -306,6 +306,27 @@
   片段),片段级对比不可靠,需按 muxword 位级/group 输入(residual/qp/ich)定位
   line1 末组的预测/重建输入。疑似窄 slice 行末 group 的右缘 look-ahead/上一行重建。
 
+  **2026-08-19 稳定证据定位(新增)**:非 VLC 编码层,而是**预测输入链路在奇数行丢一组**。
+  多路独立证据交叉确认:
+  1. muxword 位级:word22 低 24bit 一致、高 24bit 分歧(DSC 打包先发低位,高 24bit 为
+     line1 末组 Co/Cg 的后半 VLC 片段)。
+  2. `i_valid_pd` 逐行事务数统计:**16/15 交替**,奇数行(line1,line3,...)只产生 15 个
+     group 事务,C model 每行固定 16 组 → RTL 预测输出链路每两行丢一组。
+  3. `dsce_bpvector` 的 `i_cur_x`(当前组起点)在 line1 末组为 **42**(应为 45),偏移
+     恰为 3 像素 = 一组。C 的 `prevLinePred`/BP 预测按 `hPos-7`(45→38)取重建,
+     RTL 因 `i_cur_x=42` 取到像素 35 → **BP 预测像素差 3**(RTL `[90,42,210]` vs
+     C `[87,42,212]`,Co 全对、Y/Cg 差,正是读偏移 3 的重建像素)。
+  4. 上游替换 A/B(把 dsce_bpvector/dsce_mpp/dsce_ich/dsce_vlc 换成 function model)
+     均 FAIL 不变或 DIFFERENT FAILURE,不能定罪模块本身——function model 的 DPI 状态
+     是**全局单例**(`units[3]`/`State state`/`history[32]`),ms2 有 2 slice×N 实例
+     共用同一状态互相污染(单 slice 场景才适用)。项目已在提交 `5c74021` 主动删除
+     function-model 替换 target,该路径不宜继续。
+  5. 丢组位置在 **flatness 行尾 flush → predict 输入(`i_valid_fd`)边界**:
+     `dsce_flat_flags` 行尾 flush(`i_flush_count=5`,last 在 count=2)与
+     `dsce_slice` 的 flatness 输出调度器(FIFO + cooldown=3 恢复四拍节拍)在行尾
+     竞争,奇数行末组事务丢失。修复方向:核对 flat_flags flush 输出的事务数/时序与
+     行末组数对齐,或调度器在 flush 突发时不丢事务。
+
 - **大 slice 的 format buffer 容量不足(ms2_192)**:g1(96 宽 slice)encoder 在
   ~1824/2592 words 提前停(stream_builder FIFO + format RAM 256 深,在 mux 读门控
   下无法容纳整 slice 输出 → encoder 早停 → 早进 PAD → 截断)。且 g0 先完成 PAD、
