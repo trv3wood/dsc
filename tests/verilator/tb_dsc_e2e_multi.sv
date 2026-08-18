@@ -265,6 +265,32 @@ module tb_dsc_e2e_multi;
                 dut.dsce_engine_inst.i_axi_tdata_mux[47:0]);
     end
 
+    // 前 3000 拍逐周期转储 mux 与 format0 的 chunk 配置/边界，定位首 chunk 切 slice 时机。
+    integer fc_file;
+    int     fc_cycle;
+    initial fc_file = $fopen("tests/verilator/generated/first_chunk.log", "w");
+    always @(posedge axi_clk) begin : FirstChunkDump
+        if (!async_reset_n) fc_cycle <= 0;
+        else begin
+            if (fc_cycle < 3000 && fc_cycle > 300)
+                $fwrite(fc_file, "cyc=%0d msel=%0d mst=%0d mlast=%0b mvalid=%0b | f0_tv=%0b f0_last=%0b f0_cw=%0d f0_tw=%0d f0_sh=%0d f0_out=%0d f0_st=%0d f0_bound=%0b\n",
+                    fc_cycle,
+                    dut.dsce_engine_inst.dsce_slice_mux_inst.i_slice_select,
+                    dut.dsce_engine_inst.dsce_slice_mux_inst.i_slice_state,
+                    dut.dsce_engine_inst.dsce_slice_mux_inst.i_last_in,
+                    dut.dsce_engine_inst.dsce_slice_mux_inst.i_valid_in,
+                    dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.axi_tvalid_out,
+                    dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.axi_last_out,
+                    dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_axi_chunk_words,
+                    dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_axi_target_words,
+                    dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_axi_slice_height,
+                    dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_axi_out_count,
+                    dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_read_state,
+                    dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.dsce_format_buffer_inst.i_axi_chunk_boundary);
+            fc_cycle <= fc_cycle + 1;
+        end
+    end
+
     always @(posedge axi_clk) begin : StallWatchdog
         if (!async_reset_n) begin
             stall_wait_cycles <= 0;

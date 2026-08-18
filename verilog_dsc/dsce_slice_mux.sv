@@ -162,7 +162,11 @@ module dsce_slice_mux
                             axi_tvalid_out <= 1'b1;
                             axi_tdata_out <= i_data_in;
 
-                            if (i_last_in == 1'b1) begin
+                            if (i_last_in == 1'b1 && axi_tready_out == 1'b1) begin
+                                // 尾字本拍已被下游接受：直接 HBLANK，避免 kSST_LAST 重发造成重复字。
+                                i_slice_state <= kSST_HBLANK;
+                                axi_tready_in[i_slice_select] <= 1'b0;
+                            end else if (i_last_in == 1'b1) begin
                                 i_slice_state <= kSST_LAST;
                             end else if (axi_tready_out == 1'b1) begin
                                 i_slice_state <= kSST_NORMAL;
@@ -193,7 +197,8 @@ module dsce_slice_mux
                                 axi_tdata_out <= i_data_in;
 
                                 if (i_last_in == 1'b1)  begin
-                                    i_slice_state <= kSST_LAST;
+                                    // 尾字本拍已接受：直接 HBLANK，避免 kSST_LAST 重发造成重复字。
+                                    i_slice_state <= kSST_HBLANK;
                                     axi_tready_in[i_slice_select] <= 1'b0;
                                 end else begin
                                     axi_tready_in[i_slice_select] <= 1'b1;

@@ -67,12 +67,12 @@ C 参考模型的跳转/类型查询，以及打开文件时自动流出的 lint
 - **C 源码是 CRLF + 非 ASCII 版权头**，grep 默认当二进制返回空。搜索用 `grep -a`
   （或 awk/`rg -a`）。clangd 对 CRLF 处理正常，不影响 LSP。
 - **诊断 = read-time lint，不等于功能正确**。诊断流是读码时的低成本 lint 线索；
-  验收仍以 `make rtl-e2e` golden 逐字节一致为准（见 debug-rtl-by-golden-diff 硬约束）。
+  验收仍以 `make rtl-e2e` golden 逐字节一致为准（见 rtl-debugging 硬约束）。
 - RTL 里部分符号（如 `dsce_quant.sv`，不在顶层 filelist）可能不在索引内；
   slang 侧找不到定义时用 grep 查包/归档，别默认是 LSP 坏了。
 
 ## 与调试 skill 的配合
 
 LSP 用于**定位**（信号定义/引用点、类型、跨模块连接）；定位完成后按
-`debug-rtl-by-golden-diff` 的纪律收敛首差异并修复。LSP 跳转找到的 `file:line` 只作
+`rtl-debugging` 的纪律收敛首差异并修复。LSP 跳转找到的 `file:line` 只作
 证据索引，不作功能正确性的证明——`只读代码不算验证`。

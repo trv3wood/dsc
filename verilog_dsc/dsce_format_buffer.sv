@@ -153,11 +153,16 @@ module dsce_format_buffer
         i_axi_chunk_boundary = (i_axi_chunk_words != 16'd0 && i_read_state == kRS_DATA_READY) &&
                                ((i_axi_out_count + 16'd1) % i_axi_chunk_words == 16'd0);
 
-        // last 组合输出：仅多 slice 时生效，与 chunk 最后一个数据 word 的传输同拍；
-        // slice 数据读尽（kRS_DATA_LAST 握手）同样拉高。单 slice 时恒 0，行为与原始一致。
+        // last 组合输出：仅多 slice 时生效，与 chunk 最后一个 word 的传输同拍。
+        // 注意：kRS_DATA_LAST 的 transient 追平(编码器暂未写下一字)不算 chunk 尾，
+        // 否则首个 word 就误发 last 让 mux 提前切 slice(多 slice 首字重复/错位根因)。
+        // kRS_DATA_PAD 零填充也按 out_count 判定 chunk 尾，否则某 slice 提前 pad 时
+        // mux 卡在该 slice 上不再轮询。单 slice 时恒 0，行为与原始一致。
         axi_last_out = i_axi_multi_slice &&
-                       ((i_read_state == kRS_DATA_LAST && axi_tready_out == 1'b1) ||
-                        (i_axi_chunk_boundary && i_axi_ren == 1'b1));
+                       ((i_axi_chunk_boundary && i_axi_ren == 1'b1) ||
+                        (i_read_state == kRS_DATA_PAD &&
+                         ((i_axi_out_count + 16'd1) % i_axi_chunk_words == 16'd0) &&
+                         axi_tready_out == 1'b1));
     end : SignalMap
 
 
@@ -274,12 +279,11 @@ module dsce_format_buffer
 
                     kRS_DATA_INIT:  begin
                         axi_tvalid_out <= 1'b1;
-                        i_axi_pause_chunk <= 1'b0;   // 已重新获得数据，恢复普通读进
+                        // 不再因 chunk 边界显式暂停：留在 READY 靠 mux 背压门控，
+                        // axi_last_out 已在边界拍通知 mux 切换。显式暂停会清零 tvalid，
+                        // 使已读出的下一个 word 在 1 拍 RAM 读延迟里丢失（多 slice 丢字根因）。
                         if (i_axi_ren == 1'b1 && i_axi_raddr_p1 == i_axi_waddr) begin
                             i_read_state <= kRS_DATA_LAST;
-                        end else if (i_axi_ren == 1'b1 && i_axi_chunk_boundary) begin
-                            i_axi_pause_chunk <= 1'b1;
-                            i_read_state <= kRS_XMIT_DELAY;
                         end else begin
                             i_read_state <= kRS_DATA_READY;
                         end // if
@@ -289,10 +293,8 @@ module dsce_format_buffer
                         axi_tvalid_out <= 1'b1;
                         if (i_axi_ren == 1'b1 && i_axi_raddr_p1 == i_axi_waddr) begin
                             i_read_state <= kRS_DATA_LAST;
-                        end else if (i_axi_ren == 1'b1 && i_axi_chunk_boundary) begin
-                            i_axi_pause_chunk <= 1'b1;
-                            i_read_state <= kRS_XMIT_DELAY;
-                        end // if
+                        end // 否则留在 READY：mux 切走后 tready=0 → ren=0 → raddr 停住、
+                           //  RAM 保持当前 word，mux 切回时无损续读
                     end // kRS_DATA_READY
 
                     kRS_DATA_LAST:  begin
