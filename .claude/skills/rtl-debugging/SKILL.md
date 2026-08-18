@@ -1,8 +1,9 @@
 ---
 name: rtl-debugging
 description: >
-  Use clangd (C model) and slang-server (SystemVerilog RTL) LSP for cross-file
-  navigation, definition/usage lookup, hover type info, and read-time lint.
+   Debug SystemVerilog RTL failures using structured evidence.
+
+   Prefer semantic navigation, simulation evidence, waveform inspection, and assertions over ad-hoc instrumentation.
 ---
 # RTL Debugging Skill
 
@@ -93,3 +94,33 @@ Record:
 * root cause
 * RTL patch
 * regression result
+
+## Probe Alignment Discipline
+
+Do not assume internal signals or cycles are directly comparable across models.
+
+Align observations in this order:
+
+1. **Transaction / semantic event**
+   - accepted input
+   - produced output
+   - request / response
+   - state transition
+   - commit / completion
+
+2. **Event index**
+   - compare the N-th accepted transaction with the N-th accepted transaction
+   - compare the N-th output with the N-th output
+
+3. **Timing**
+   - only after semantic events match, determine cycle / latency offset
+
+4. **Internal probes**
+   - compare internal state only when both models expose semantically equivalent state
+
+Do not spend multiple iterations forcing non-equivalent internal probes to match.
+
+If probe equivalence is unclear:
+- move outward to a stable module boundary
+- compare transactions instead of raw signals
+- record the uncertainty explicitly
