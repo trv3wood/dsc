@@ -207,6 +207,51 @@ module tb_dsc_e2e_multi;
     always @(posedge axi_clk)
         if (async_reset_n && axi_tvalid_in && axi_tready_in) accepted_input++;
 
+    // 捕获 slice0 的 VLC 片段流({size,data})，与 c_vlc_trace.txt 逐片段对比定位首分歧 group。
+    integer vlc_file;
+    int     vlc_frag_cnt [3];
+    initial vlc_file = $fopen("tests/verilator/generated/rtl_vlc_s0.log", "w");
+    always @(posedge dsc_clk) begin : VlcCapture
+        if (async_reset_n) begin
+            for (int vx = 0; vx < 3; vx++) begin
+                if (dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.i_valid_vlc[vx]) begin
+                    $fwrite(vlc_file, "ssp=%0d frag=%0d size=%0d data=%04x\n",
+                            vx, vlc_frag_cnt[vx],
+                            dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.i_size_vlc[vx],
+                            dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.i_data_vlc[vx]);
+                    vlc_frag_cnt[vx]++;
+                end
+            end
+        end
+    end
+
+    // 捕获 slice0 逐 group 的 VLC 输入边界(residual/qp/ich),对照 c_group_trace.txt。
+    integer gb_file;
+    int     gb_cnt;
+    initial gb_file = $fopen("tests/verilator/generated/rtl_group_s0.log", "w");
+    always @(posedge dsc_clk) begin : GroupBoundaryCapture
+        if (async_reset_n && dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_valid_pd) begin
+            $fwrite(gb_file, "g=%0d qp=%0d ich=%0b r=%016x/%016x/%016x p=%06x last=%0b\n",
+                    gb_cnt,
+                    dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_primary_qp_res,
+                    dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_ich_selected_dec,
+                    {dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[0].res_y,
+                     dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[0].res_co,
+                     dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[0].res_cg},
+                    {dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[1].res_y,
+                     dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[1].res_co,
+                     dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[1].res_cg},
+                    {dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[2].res_y,
+                     dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[2].res_co,
+                     dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_residual_dec[2].res_cg},
+                    {dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_vlc_size_dec[0],
+                     dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_vlc_size_dec[1],
+                     dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_vlc_size_dec[2]},
+                    dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_last_pd);
+            gb_cnt++;
+        end
+    end
+
     // 停摆 watchdog：mux 向选中 slice 持续 ready 但 tvalid 长期为低时，
     // 转储各 slice 的 format/slice_buffer 内部状态，定位编码停摆点。
     int stall_wait_cycles = 0;
