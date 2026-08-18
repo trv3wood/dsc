@@ -212,3 +212,30 @@
    `last_in=69/69`、`select_chg=138`（交织已切换）但 `top_mis=13337`（顺序错位）。
    修复方向：让 partition 每行将 slice 列固定映射到 processor（spl≤pSPC 时），
    spl>pSPC 时行内回绕复用，并保证行末 slice-buffer 读侧时序。
+   
+结论：部分缺陷确实修复了，但不能认定 `4b1ebbc → c4d0557` 已形成通用、完整的 RTL 修复。当前证据只足以证明固定的 8bpc RGB、单 slice、无 backpressure 用例正确。
+
+主要问题按严重度如下。
+
+- 高：多 slice 仍未修复。`dsce_partition` 的 `i_slice_select` 在 slice 结束后持续轮换，行首只清 `i_slice_count`，没有恢复 slice 列到 processor 的固定映射，见 [dsce_partition.sv](/home/zys/Project/dsc/verilog_dsc/dsce_partition.sv:106)。实测 `make rtl-e2e-multi MULTI_CASE=ms2` 在 byte 7 首差，`top_mis=13337`，输出 13440/15552 bytes。最新提交只让 `slice_mux` 轮换起来，并未修正流的归属和顺序。
+
+- 高：新 BP 实现只对当前 8bpc RGB 用例成立。边缘阈值为 `32 << (bpc-8)`，但差值先被 `bp_mad()` 饱和到 6 bit，再与 `edge_threshold[5:0]` 比较，见 [dsce_bpvector.sv](/home/zys/Project/dsc/verilog_dsc/dsce_bpvector.sv:163)。当 bpc=9/10/12 时阈值低 6 位为 0，几乎所有非零差值都会被判为 edge。此外，非 RGB 模式下 chroma midpoint 仍固定为 `1 << bpc`，而不是对应分量位深的中点，见同文件第 110 行。现有生成器固定 8bpc RGB，因此完全覆盖不到这两个问题。
+
+- 高：format buffer 的长度修复含配置和容量错误。`i_dsc_target_words` 在 `dsc_pps_update` 同一沿使用旧的 `i_bits_per_component`，见 [dsce_format_buffer.sv](/home/zys/Project/dsc/verilog_dsc/dsce_format_buffer.sv:213)。由于 PPS 更新是单拍脉冲，首次配置 12bpc 时仍按 6 bytes/word 计算，而实际数据路径使用 8 bytes/word。目标字数和写/输出计数又都只有 16 bit，大尺寸 slice 会溢出；因此日志中的多分辨率/4K能力不能由该实现支持。
+
+- 中：最新 chunk-interleave 补丁不具备完整的流控语义。`axi_last_out` 组合依赖 `axi_tready_out`，且 chunk boundary 只在 `kRS_DATA_READY` 判断，`kRS_DATA_PAD` 零填充阶段不会产生 chunk `last`，见 [dsce_format_buffer.sv](/home/zys/Project/dsc/verilog_dsc/dsce_format_buffer.sv:149)。随机 backpressure 和需要 chunk padding 的多 slice 流仍没有可信保障。
+
+- 中：BP 验证链目前不可重复。`make rtl-bp-capture` 启用 ICH function model 后，testbench 仍直接引用真实 `dsce_ich_candidate_inst` 层级，见 [tb_dsc_e2e.sv](/home/zys/Project/dsc/tests/verilator/tb_dsc_e2e.sv:575)，导致 22 个 elaboration error。现有 `rtl-bp-replay` 能通过，是因为仓库里已有旧 capture 文件，不能证明当前 HEAD 可重新生成相同证据。
+
+- 低：可综合 RTL 中残留了调试硬件。MPP 中有多个持续计数的 32-bit `int` 寄存器，见 [dsce_mpp.sv](/home/zys/Project/dsc/verilog_dsc/dsce_mpp.sv:74)；ICH candidate 还有 `$test$plusargs/$display` 和调试计数器，见 [dsce_ich_candidate.sv](/home/zys/Project/dsc/verilog_dsc/dsce_ich_candidate.sv:216)。此外 Verilator 对新 BP 组合逻辑报告了 inferred latch，说明尚未达到综合签核状态。
+
+本次复跑结果：
+
+- `make rtl-e2e`：PASS，15552 bytes 零失配。
+- `make rtl-e2e GOLDEN_SEED=0x1234`：PASS，15552 bytes 零失配。
+- `make rtl-flatness-replay`：PASS，3456 groups 零失配。
+- `make rtl-bp-replay`：PASS，3456 groups 零失配，但使用已有 capture。
+- `make rtl-bp-capture`：FAIL，层级引用导致 elaboration error。
+- `make rtl-e2e-multi MULTI_CASE=ms2`：FAIL，13337 个顶层字节失配。
+
+因此，更准确的结论是：flatness、MPP/ICH/VLC 时序、QP 对齐和 BP 的核心方向已经让两个固定单-slice用例真正通过；但 BP 多位深/非 RGB、format buffer 长度、backpressure 和多 slice 仍未修复，当前不应把 [rtl_fix_log.md](/home/zys/Project/dsc/tests/verilator/rtl_fix_log.md:1) 描述为“RTL 缺陷已整体修复”。
