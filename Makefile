@@ -1,4 +1,4 @@
-.PHONY: golden images model model-clean model-run model-4k model-regression model-compile-commands rtl-clean rtl-e2e rtl-e2e-trace rtl-e2e-multi rtl-flatness-replay rtl-lint rtl-slang rtl-smoke
+.PHONY: golden images model model-clean model-run model-4k model-regression model-compile-commands rtl-clean rtl-e2e rtl-e2e-trace rtl-e2e-cov rtl-e2e-cov-clean rtl-e2e-multi rtl-flatness-replay rtl-lint rtl-slang rtl-smoke
 
 GOLDEN_SEED ?= 0x445343
 GOLDEN_PATTERN ?= random
@@ -70,6 +70,29 @@ rtl-e2e-trace: golden
 	./obj_dir/Vtb_dsc_e2e
 	@echo "VCD 波形已生成: tests/verilator/generated/rtl_e2e_trace.vcd"
 	@echo "用 gtkwave 打开: gtkwave tests/verilator/generated/rtl_e2e_trace.vcd"
+
+# 覆盖率分析（line + toggle）。产物全部输出到 $(COV_DIR)（默认 /tmp/dsc_cov），
+# 不污染工作区；用 verilator_coverage --annotate 生成逐行注释报告。
+# 看盲区: grep '%000000' $(COV_DIR)/annotate/dsce_*.sv
+COV_DIR ?= /tmp/dsc_cov
+
+rtl-e2e-cov: golden
+	mkdir -p $(COV_DIR)
+	verilator --binary --timing --assert -Wall -Wno-fatal \
+		-Wno-WIDTH -Wno-UNUSED -Wno-IMPORTSTAR -Wno-PINCONNECTEMPTY \
+		-Wno-BLKSEQ -Wno-DECLFILENAME -Wno-GENUNNAMED -Wno-MULTIDRIVEN \
+		-Wno-TIMESCALEMOD \
+		--coverage-line --coverage-toggle --coverage-underscore \
+		--top-module tb_dsc_e2e -f tests/verilator/rtl.f \
+		tests/verilator/tb_dsc_e2e.sv --Mdir $(COV_DIR)/obj
+	$(COV_DIR)/obj/Vtb_dsc_e2e +verilator+coverage+file+$(COV_DIR)/coverage.dat
+	verilator_coverage $(COV_DIR)/coverage.dat --annotate $(COV_DIR)/annotate
+	@echo "覆盖率产物: $(COV_DIR)/"
+	@echo "模块盲区排名: 见 verilator_coverage 上方 Total coverage 行"
+	@echo "看具体未覆盖行: grep '%000000' $(COV_DIR)/annotate/dsce_*.sv"
+
+rtl-e2e-cov-clean:
+	rm -rf $(COV_DIR)
 
 # 多 slice / 多分辨率 e2e。向量由 generate_golden.py 生成；MULTI_CASE 指定用例名
 #（如 ms2、ms2_192；缺省读 generated/ 单 slice）。多 slice 交织缺陷见 rtl_fix_log.md。
