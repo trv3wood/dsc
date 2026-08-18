@@ -1,0 +1,9 @@
+{
+  "flags": "-f tests/verilator/rtl.f",
+  "index": [
+    {
+      "dirs": ["verilog_dsc", "tests/verilator"],
+      "excludeDirs": ["obj_dir", "obj_multi", "generated", "model"]
+    }
+  ]
+}

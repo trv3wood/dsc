@@ -1,4 +1,4 @@
-.PHONY: golden images model model-clean model-run model-4k model-regression rtl-clean rtl-e2e rtl-e2e-trace rtl-e2e-multi rtl-e2e-flat-model rtl-e2e-vlc-model rtl-e2e-bp-model rtl-e2e-bp-mpp-model rtl-e2e-bp-vlc-model rtl-e2e-bp-ich-model rtl-vlc-capture rtl-vlc-capture-bp-model rtl-vlc-replay rtl-vlc-replay-bp-model rtl-flatness-replay rtl-lint rtl-slang rtl-smoke
+.PHONY: golden images model model-clean model-run model-4k model-regression rtl-clean rtl-e2e rtl-e2e-trace rtl-e2e-multi rtl-flatness-replay rtl-lint rtl-slang rtl-smoke
 
 GOLDEN_SEED ?= 0x445343
 GOLDEN_PATTERN ?= random
@@ -77,108 +77,6 @@ rtl-e2e-multi: golden
 		tests/verilator/tb_dsc_e2e_multi.sv --Mdir obj_multi
 	./obj_multi/Vtb_dsc_e2e_multi $(if $(MULTI_CASE),+case=$(MULTI_CASE),)
 
-# 用独立 C++ function model 替换行尾 flatness QP 调整，用于模块级 A/B。
-rtl-e2e-flat-model: golden
-	verilator --binary --timing --assert -Wall -Wno-fatal \
-		-Wno-WIDTH -Wno-UNUSED -Wno-IMPORTSTAR -Wno-PINCONNECTEMPTY \
-		-Wno-BLKSEQ -Wno-DECLFILENAME -Wno-GENUNNAMED -Wno-MULTIDRIVEN \
-		-Wno-TIMESCALEMOD -DDSC_FLATNESS_MODEL_SUBSTITUTE \
-		--top-module tb_dsc_e2e -f tests/verilator/rtl.f \
-		tests/verilator/tb_dsc_e2e.sv tests/verilator/model/flatness_function_model.cpp
-	./obj_dir/Vtb_dsc_e2e
-
-# 用 C++ function model 替换首差异所在的 chroma ICH VLC 发射路径。
-rtl-e2e-vlc-model: golden
-	verilator --binary --timing --assert -Wall -Wno-fatal \
-		-Wno-WIDTH -Wno-UNUSED -Wno-IMPORTSTAR -Wno-PINCONNECTEMPTY \
-		-Wno-BLKSEQ -Wno-DECLFILENAME -Wno-GENUNNAMED -Wno-MULTIDRIVEN \
-		-Wno-TIMESCALEMOD -DDSC_VLC_MODEL_SUBSTITUTE \
-		--top-module tb_dsc_e2e -f tests/verilator/rtl.f \
-		tests/verilator/tb_dsc_e2e.sv tests/verilator/model/vlc_function_model.cpp
-	./obj_dir/Vtb_dsc_e2e
-
-# 在完整顶层只替换整个 BP vector/predict 模块。
-rtl-e2e-bp-model: golden
-	verilator --binary --timing --assert -Wall -Wno-fatal \
-		-Wno-WIDTH -Wno-UNUSED -Wno-IMPORTSTAR -Wno-PINCONNECTEMPTY \
-		-Wno-BLKSEQ -Wno-DECLFILENAME -Wno-GENUNNAMED -Wno-MULTIDRIVEN \
-		-Wno-TIMESCALEMOD -DDSC_BPVECTOR_MODEL_SUBSTITUTE \
-		--top-module tb_dsc_e2e -f tests/verilator/rtl.f \
-		tests/verilator/tb_dsc_e2e.sv tests/verilator/model/bpvector_function_model.cpp
-	./obj_dir/Vtb_dsc_e2e
-
-# 在 BP 替身基线上完整替换三个 MPP 实例，验证 midpoint 子模块边界。
-rtl-e2e-bp-mpp-model: golden
-	verilator --binary --timing --assert -Wall -Wno-fatal \
-		-Wno-WIDTH -Wno-UNUSED -Wno-IMPORTSTAR -Wno-PINCONNECTEMPTY \
-		-Wno-BLKSEQ -Wno-DECLFILENAME -Wno-GENUNNAMED -Wno-MULTIDRIVEN \
-		-Wno-TIMESCALEMOD -DDSC_BPVECTOR_MODEL_SUBSTITUTE -DDSC_MPP_MODEL_SUBSTITUTE \
-		--top-module tb_dsc_e2e -f tests/verilator/rtl.f \
-		tests/verilator/tb_dsc_e2e.sv tests/verilator/model/bpvector_function_model.cpp \
-		tests/verilator/model/mpp_function_model.cpp
-	./obj_dir/Vtb_dsc_e2e
-
-# 在 BP 替身基线上完整替换三个 VLC 实例，区分 syntax 与上游决策差异。
-rtl-e2e-bp-vlc-model: golden
-	verilator --binary --timing --assert -Wall -Wno-fatal \
-		-Wno-WIDTH -Wno-UNUSED -Wno-IMPORTSTAR -Wno-PINCONNECTEMPTY \
-		-Wno-BLKSEQ -Wno-DECLFILENAME -Wno-GENUNNAMED -Wno-MULTIDRIVEN \
-		-Wno-TIMESCALEMOD -DDSC_BPVECTOR_MODEL_SUBSTITUTE -DDSC_VLC_MODEL_SUBSTITUTE \
-		--top-module tb_dsc_e2e -f tests/verilator/rtl.f \
-		tests/verilator/tb_dsc_e2e.sv tests/verilator/model/bpvector_function_model.cpp \
-		tests/verilator/model/vlc_function_model.cpp
-	./obj_dir/Vtb_dsc_e2e
-
-# 在 BP 替身基线上完整替换 ICH（history、candidate、decision 全部在边界内）。
-rtl-e2e-bp-ich-model: golden
-	verilator --binary --timing --assert -Wall -Wno-fatal \
-		-Wno-WIDTH -Wno-UNUSED -Wno-IMPORTSTAR -Wno-PINCONNECTEMPTY \
-		-Wno-BLKSEQ -Wno-DECLFILENAME -Wno-GENUNNAMED -Wno-MULTIDRIVEN \
-		-Wno-TIMESCALEMOD -DDSC_BPVECTOR_MODEL_SUBSTITUTE -DDSC_ICH_MODEL_SUBSTITUTE \
-		--top-module tb_dsc_e2e -f tests/verilator/rtl.f \
-		tests/verilator/tb_dsc_e2e.sv tests/verilator/model/bpvector_function_model.cpp \
-		tests/verilator/model/ich_function_model.cpp
-	./obj_dir/Vtb_dsc_e2e
-
-# 从真实顶层 RTL 捕获 dsce_vlc 公开输入，不包含 golden 输出。
-rtl-vlc-capture: golden
-	verilator --binary --timing --assert -Wall -Wno-fatal \
-		-Wno-WIDTH -Wno-UNUSED -Wno-IMPORTSTAR -Wno-PINCONNECTEMPTY \
-		-Wno-BLKSEQ -Wno-DECLFILENAME -Wno-GENUNNAMED -Wno-MULTIDRIVEN \
-		-Wno-TIMESCALEMOD -DDSC_VLC_CAPTURE \
-		--top-module tb_dsc_e2e -f tests/verilator/rtl.f \
-		tests/verilator/tb_dsc_e2e.sv
-	./obj_dir/Vtb_dsc_e2e
-
-# 从 BP 替换后的可信上游捕获 512 个完整 VLC 边界事务。
-rtl-vlc-capture-bp-model: golden
-	verilator --binary --timing --assert -Wall -Wno-fatal \
-		-Wno-WIDTH -Wno-UNUSED -Wno-IMPORTSTAR -Wno-PINCONNECTEMPTY \
-		-Wno-BLKSEQ -Wno-DECLFILENAME -Wno-GENUNNAMED -Wno-MULTIDRIVEN \
-		-Wno-TIMESCALEMOD -DDSC_VLC_CAPTURE -DDSC_BPVECTOR_MODEL_SUBSTITUTE \
-		--top-module tb_dsc_e2e -f tests/verilator/rtl.f \
-		tests/verilator/tb_dsc_e2e.sv tests/verilator/model/bpvector_function_model.cpp
-	./obj_dir/Vtb_dsc_e2e
-
-# 用同一顶层输入 trace 对比完整 RTL VLC 与完整 function model。
-rtl-vlc-replay: rtl-vlc-capture
-	verilator --binary --timing --assert -Wall -Wno-fatal \
-		-Wno-WIDTH -Wno-UNUSED -Wno-IMPORTSTAR -Wno-BLKSEQ -Wno-TIMESCALEMOD \
-		--top-module tb_dsc_vlc_replay \
-		verilog_dsc/dsce_defs_pkg.sv verilog_dsc/dsce_vlc.sv \
-		verilog_dsc/dsce_vlc_function_model.sv tests/verilator/tb_dsc_vlc_replay.sv \
-		tests/verilator/model/vlc_function_model.cpp
-	./obj_dir/Vtb_dsc_vlc_replay
-
-rtl-vlc-replay-bp-model: rtl-vlc-capture-bp-model
-	verilator --binary --timing --assert -Wall -Wno-fatal \
-		-Wno-WIDTH -Wno-UNUSED -Wno-IMPORTSTAR -Wno-BLKSEQ -Wno-TIMESCALEMOD \
-		--top-module tb_dsc_vlc_replay \
-		verilog_dsc/dsce_defs_pkg.sv verilog_dsc/dsce_vlc.sv \
-		verilog_dsc/dsce_vlc_function_model.sv tests/verilator/tb_dsc_vlc_replay.sv \
-		tests/verilator/model/vlc_function_model.cpp
-	./obj_dir/Vtb_dsc_vlc_replay
-
 # 用独立像素/QP function model 逐事务验证 flatness 边界，不经过预测器和码控。
 rtl-flatness-replay:
 	$(MAKE) golden GOLDEN_PATTERN=flatness
@@ -189,38 +87,6 @@ rtl-flatness-replay:
 		verilog_dsc/dsce_flat_flags.sv verilog_dsc/dsce_flatness.sv \
 		tests/verilator/tb_dsc_flatness_replay.sv
 	./obj_dir/Vtb_dsc_flatness_replay
-
-# 在 ICH function model 基线上使用真实 dsce_bpvector，验证 BP 实现。
-rtl-e2e-ich-model: golden
-	verilator --binary --timing --assert -Wall -Wno-fatal \
-		-Wno-WIDTH -Wno-UNUSED -Wno-IMPORTSTAR -Wno-PINCONNECTEMPTY \
-		-Wno-BLKSEQ -Wno-DECLFILENAME -Wno-GENUNNAMED -Wno-MULTIDRIVEN \
-		-Wno-TIMESCALEMOD -DDSC_ICH_MODEL_SUBSTITUTE \
-		--top-module tb_dsc_e2e -f tests/verilator/rtl.f \
-		tests/verilator/tb_dsc_e2e.sv tests/verilator/model/ich_function_model.cpp
-	./obj_dir/Vtb_dsc_e2e
-
-# 捕获真实顶层的 dsce_bpvector 输入事务，供独立 replay 使用。
-rtl-bp-capture: golden
-	verilator --binary --timing --assert -Wall -Wno-fatal \
-		-Wno-WIDTH -Wno-UNUSED -Wno-IMPORTSTAR -Wno-PINCONNECTEMPTY \
-		-Wno-BLKSEQ -Wno-DECLFILENAME -Wno-GENUNNAMED -Wno-MULTIDRIVEN \
-		-Wno-TIMESCALEMOD -DDSC_BPVECTOR_MODEL_SUBSTITUTE -DDSC_ICH_MODEL_SUBSTITUTE -DDSC_BP_CAPTURE \
-		--top-module tb_dsc_e2e -f tests/verilator/rtl.f \
-		tests/verilator/tb_dsc_e2e.sv tests/verilator/model/bpvector_function_model.cpp \
-		tests/verilator/model/ich_function_model.cpp
-	./obj_dir/Vtb_dsc_e2e
-
-# 用同一顶层输入 trace 对比 RTL dsce_bpvector 与 function model。
-rtl-bp-replay:
-	verilator --binary --timing --assert -Wall -Wno-fatal \
-		-Wno-WIDTH -Wno-UNUSED -Wno-IMPORTSTAR -Wno-BLKSEQ -Wno-TIMESCALEMOD \
-		-DDSC_BPVECTOR_MODEL_SUBSTITUTE \
-		--top-module tb_dsc_bp_replay \
-		verilog_dsc/dsce_defs_pkg.sv verilog_dsc/dsce_sad.sv \
-		verilog_dsc/dsce_bpvector.sv verilog_dsc/dsce_bpvector_function_model.sv \
-		tests/verilator/tb_dsc_bp_replay.sv tests/verilator/model/bpvector_function_model.cpp
-	./obj_dir/Vtb_dsc_bp_replay
 
 rtl-clean:
 	rm -rf obj_dir

@@ -351,23 +351,21 @@ make rtl-bp-replay                     # 0 失配
 ### function-model 替换 target（升级路径）
 
 替换是调试手段不是默认流程；纪律见 SKILL.md"升级路径"。**不要用 value model 替换正在调时序的
-模块**（会消掉要抓的 bug）。
+模块**（会消掉要抓的 bug）——方法论是替换可疑模块**周围**的组件、保留可疑模块本身。
 
-| target | 替换模块 | define |
+早期把所有 `rtl-e2e-*-model` 替换 target（替换 BP/MPP/VLC/ICH/flatness 本身）与
+`rtl-{vlc,bp}-{capture,replay}` 对比 harness 移除了：它们建模的是可疑模块本身，与上述方法论
+相悖。缺陷定位记录中引用的这些历史命令不再可运行，但结论仍有效。
+
+当前仅保留一个模块边界校验 harness：
+
+| target | 内容 | 说明 |
 |---|---|---|
-| `rtl-e2e-flat-model` | 行尾 flatness QP 调整 | `-DDSC_FLATNESS_MODEL_SUBSTITUTE` |
-| `rtl-e2e-vlc-model` | chroma ICH VLC 发射路径 | `-DDSC_VLC_MODEL_SUBSTITUTE` |
-| `rtl-e2e-bp-model` | 整个 BP vector/predict | `-DDSC_BPVECTOR_MODEL_SUBSTITUTE` |
-| `rtl-e2e-bp-mpp-model` | BP + MPP | 两个 define |
-| `rtl-e2e-bp-vlc-model` | BP + VLC | 两个 define |
-| `rtl-e2e-bp-ich-model` | BP + ICH | 两个 define |
-| `rtl-e2e-ich-model` | ICH | `-DDSC_ICH_MODEL_SUBSTITUTE` |
-| `rtl-vlc-capture` / `rtl-vlc-replay` | 抓 VLC 输入 trace / 独立 replay | `-DDSC_VLC_CAPTURE` |
-| `rtl-bp-capture` / `rtl-bp-replay` | 抓 BP trace / 独立 replay | `-DDSC_BP_CAPTURE` |
-| `rtl-flatness-replay` | flatness replay | `flatness` 图案 |
+| `rtl-flatness-replay` | 逐事务验证 flatness 边界 | 保持 `dsce_flat_check/flags/flatness` RTL 真实，用期望向量驱动，不经过预测器和码控 |
 
-function model 源文件均在 `tests/verilator/model/*.cpp`，adapter 在
-`verilog_dsc/dsce_*_function_model.sv`（`ifdef` 守护）。四情形判定表见 SKILL.md。
+function model 源文件仍在 `tests/verilator/model/*.cpp`，adapter 在
+`verilog_dsc/dsce_*_function_model.sv`（`ifdef` 守护），可作参考或按新方法论重建目标。
+四情形判定表见 SKILL.md。
 
 ### 工具与 blocked 判据
 
