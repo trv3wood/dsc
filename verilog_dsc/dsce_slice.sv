@@ -97,7 +97,11 @@ module dsce_slice
     logic                       i_force_mpp;
 
     tDSC_QLEVEL                 i_rc_primary_qp, i_rc_primary_qp_next, i_rc_primary_qp_prev, i_rc_prev_qp;
-    tDSC_QLEVEL                 i_primary_qp, i_primary_qp_res, i_prev_qp;
+    tDSC_QLEVEL                 i_primary_qp, i_primary_qp_rate, i_primary_qp_res;
+    tDSC_QLEVEL                 i_prev_qp, i_prev_qp_rate;
+    tDSC_QLEVEL                 i_rate_feedback_qp, i_rate_feedback_prev_qp;
+    tDSC_QLEVEL                 i_flat_override_qp, i_flat_override_prev_qp;
+    logic                       i_flat_override_valid;
 
     logic                       i_valid_fd;
     logic                       i_last_fd;
@@ -144,7 +148,45 @@ module dsce_slice
 
     always_comb begin : SignalMap
         cfg_slice_status.slice_overflow = i_slice_buffer_overflow;
+
+        // rate 的调整结果在下一事务采样沿之后才提交；normal-flat 必须在该沿前
+        // 覆盖编码 QP，随后由已更新的 rate 状态自然接管。
+        i_primary_qp = i_flat_override_valid ? i_flat_override_qp : i_primary_qp_rate;
+        i_prev_qp = i_flat_override_valid ? i_flat_override_prev_qp : i_prev_qp_rate;
+
+        // FlatnessAdjustment 在当前 group 编码完成后同时改写 stQp/prevQp，
+        // 只影响下一次 rate-control 决策；不能反向修改并行的 fd 编码事务。
+        i_rate_feedback_qp = i_primary_qp;
+        i_rate_feedback_prev_qp = i_prev_qp;
+        if (i_valid_pd) begin
+            if (!i_last_pd &&
+                i_vlc_flat_flags_aligned.group_flatness_type != kDSC_NOT_FLAT &&
+                i_primary_qp_res < cfg_rcps.rc_range_parameters[14][9:5]) begin
+                if (i_vlc_flat_flags_aligned.group_flatness_type == kDSC_SOMEWHAT_FLAT ||
+                    i_primary_qp_res < dsce_get_somewhat_flat_threshold(cfg_pps.bits_per_component)) begin
+                    i_rate_feedback_qp = dsce_adjust_qp_somewhat_flat(i_primary_qp_res);
+                    i_rate_feedback_prev_qp = dsce_adjust_qp_somewhat_flat(i_prev_qp);
+                end else begin
+                    i_rate_feedback_qp = dsce_get_very_flat_qp(cfg_pps.bits_per_component);
+                    i_rate_feedback_prev_qp = dsce_get_very_flat_qp(cfg_pps.bits_per_component);
+                end
+            end
+        end
     end : SignalMap
+
+    always_ff @(posedge dsc_clk or negedge dsc_reset_n) begin : FlatQpOverride
+        if (!dsc_reset_n) begin
+            i_flat_override_valid <= 1'b0;
+            i_flat_override_qp <= kDSC_QLEVEL_ZERO;
+            i_flat_override_prev_qp <= kDSC_QLEVEL_ZERO;
+        end else if (i_valid_pd) begin
+            i_flat_override_valid <= !i_last_pd &&
+                i_vlc_flat_flags_aligned.group_flatness_type != kDSC_NOT_FLAT &&
+                i_primary_qp_res < cfg_rcps.rc_range_parameters[14][9:5];
+            i_flat_override_qp <= i_rate_feedback_qp;
+            i_flat_override_prev_qp <= i_rate_feedback_prev_qp;
+        end
+    end
 
     // 用 valid 事务对齐 flatness 与 prediction，不依赖 group 间的固定空拍数。
     assign i_vlc_flat_flags_aligned = i_vlc_flat_flags_fifo[i_flat_flags_read_ptr];
@@ -447,8 +489,8 @@ module dsce_slice
         .dsc_rc_primary_qp_prev_in  (i_rc_primary_qp_prev),
         .dsc_rc_prev_qp_in          (i_rc_prev_qp),
         // rate control modified qp out
-        .dsc_primary_qp_out         (i_primary_qp),
-        .dsc_prev_qp_out            (i_prev_qp)
+        .dsc_primary_qp_out         (i_primary_qp_rate),
+        .dsc_prev_qp_out            (i_prev_qp_rate)
     );
 
 
@@ -470,8 +512,8 @@ module dsce_slice
         .dsc_last_in                (i_last_pd),
         .dsc_coded_group_size       (i_coded_group_size),
         .dsc_rc_size_group          (i_rc_size_group),
-        .dsc_flat_qp_in             (i_primary_qp),
-        .dsc_flat_prev_qp_in        (i_prev_qp),
+        .dsc_flat_qp_in             (i_rate_feedback_qp),
+        .dsc_flat_prev_qp_in        (i_rate_feedback_prev_qp),
         .dsc_use_mpp                (i_mpp_dec),
         .dsc_ich_selected           (i_ich_selected_dec),
         .dsc_vlc_size               (i_vlc_size_dec),

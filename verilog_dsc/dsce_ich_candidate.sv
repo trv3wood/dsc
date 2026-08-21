@@ -80,16 +80,8 @@ module dsce_ich_candidate
     logic   [31:0]                  i_suitable_check [2:0];
 
     // ICH index selection
-    tDSC_ICH_INDEX                  i_min_index_stage_1 [2:0] [7:0];
-    logic   [16:0]                  i_min_sad_stage_1   [2:0] [7:0];
-    tDSC_ICH_INDEX                  i_min_index_stage_2 [2:0] [1:0];
-    logic   [16:0]                  i_min_sad_stage_2   [2:0] [1:0];
     tDSC_ICH_INDEX                  i_ich_index_out [2:0];
-
-    // 输出流水有效位
     logic                           i_enable_pipe;
-    int                             i_output_group_count;
-    int                             i_debug_group_count;
 
     // ------------------------------------------------------------------------------------------------------------
     //                                             processes
@@ -187,15 +179,9 @@ module dsce_ich_candidate
             dsc_ich_pixel_out <= '{default: kDSC_PIXEL_INIT};
             dsc_ich_hit <= 3'b000;
             i_enable_pipe <= 1'b0;
-            i_output_group_count <= -1;
-            i_debug_group_count <= 0;
 
         end else begin
-
-            // valid pipeline enable
             i_enable_pipe <= dsc_group_valid_in;
-            if (dsc_group_valid_in)
-                i_debug_group_count <= i_debug_group_count + 1;
 
             // 结果寄存一级，使候选支路与历史表反馈的时序保持一致。
             for (int px = 0; px < 3; px++) begin : OutputStageLoop
@@ -205,25 +191,10 @@ module dsce_ich_candidate
                 end
             end : OutputStageLoop
             if (i_enable_pipe == 1'b1) begin
-                i_output_group_count <= i_debug_group_count;
                 dsc_ich_hit[0] <= (i_suitable_check[0] != 32'h0000_0000);
                 dsc_ich_hit[1] <= (i_suitable_check[1] != 32'h0000_0000);
                 dsc_ich_hit[2] <= (i_suitable_check[2] != 32'h0000_0000);
-                if ($test$plusargs("ICH_DEBUG") &&
-                    i_debug_group_count >= 539 && i_debug_group_count <= 543) begin
-                    $display("ICH_CAND group=%0d suitable=%08x/%08x/%08x valid=%08x qerr=%0d/%0d",
-                             i_debug_group_count - 1,
-                             i_suitable_check[0], i_suitable_check[1],
-                             i_suitable_check[2], dsc_ich_entry_valid_in,
-                             i_max_q_error_y, i_max_q_error_c);
-                end
             end // if
-            if ($test$plusargs("ICH_DEBUG") &&
-                i_debug_group_count >= 540 && i_debug_group_count <= 541) begin
-                $display("ICH_CAND_PIPE count=%0d enable=%0b in_valid=%0b out_hit=%03b",
-                         i_debug_group_count, i_enable_pipe,
-                         dsc_group_valid_in, dsc_ich_hit);
-            end
         end // if
     end : OutputStage
 

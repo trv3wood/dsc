@@ -77,9 +77,6 @@ module dsce_stream_fifo
     logic [kSYNTAX_PTR_HIGH:0]      i_syntax_read_ptr, i_syntax_read_ptr_plus_1;
     logic                           i_syntax_full;
 
-    // ----- control signals ----- //
-    logic                           i_coded_size_valid;
-
     // ------------------------------------------------------------------------------------------------------------
     //                                             processes
     // ------------------------------------------------------------------------------------------------------------
@@ -107,7 +104,6 @@ module dsce_stream_fifo
             i_syntax_buffer <= '{default: 5'd0};
             i_syntax_write_ptr <= '{default: 1'b0};
             i_syntax_full <= 1'b0;
-            i_coded_size_valid <= 1'b0;
 
         end else begin
 
@@ -127,15 +123,14 @@ module dsce_stream_fifo
             end // if
 
             // ----- syntax buffer ----- //
-            i_coded_size_valid <= dsc_unit_size_valid_in;
-
-            if (i_coded_size_valid == 1'b1) begin
+            // valid 与 payload 属于同一接受事务，不能延迟 valid 后读取 live data。
+            if (dsc_unit_size_valid_in == 1'b1) begin
                 i_syntax_buffer[i_syntax_write_ptr] <= dsc_coded_unit_size_in;
             end // if
 
             if (dsc_start_of_slice == 1'b1) begin
                 i_syntax_write_ptr <= '{default: 1'b0};
-            end else if (i_coded_size_valid == 1'b1) begin
+            end else if (dsc_unit_size_valid_in == 1'b1) begin
                 i_syntax_write_ptr <= i_syntax_write_ptr_plus_1;
             end // if
 
@@ -154,7 +149,7 @@ module dsce_stream_fifo
                 end // if
 
                 // syntax
-                if (i_coded_size_valid == 1'b1) begin
+                if (dsc_unit_size_valid_in == 1'b1) begin
                     if (i_syntax_write_ptr_plus_1 == i_syntax_read_ptr && (dsc_coded_size_valid_out == 1'b0 || dsc_coded_size_ready_out == 1'b0) ) begin
                         i_syntax_full <= 1'b1;
                     end // if
@@ -164,15 +159,15 @@ module dsce_stream_fifo
             end // if
 
             // ----- error checking assertion ----- //
-            if (i_coded_size_valid == 1'b1 && i_syntax_full == 1'b1 &&
+            if (dsc_unit_size_valid_in == 1'b1 && i_syntax_full == 1'b1 &&
                 !(dsc_coded_size_valid_out == 1'b1 && dsc_coded_size_ready_out == 1'b1)) begin
                 $display("SYNTAX_FIFO_OVERFLOW write=%0d read=%0d next=%0d out_valid=%0b out_ready=%0b in_valid=%0b",
                          i_syntax_write_ptr, i_syntax_read_ptr,
                          i_syntax_write_ptr_plus_1, dsc_coded_size_valid_out,
-                         dsc_coded_size_ready_out, i_coded_size_valid);
+                         dsc_coded_size_ready_out, dsc_unit_size_valid_in);
             end
             // FIFO 满时若本拍消费者取走旧条目，写端可安全复用该槽位。
-            assert (i_coded_size_valid == 1'b0 || i_syntax_full == 1'b0 ||
+            assert (dsc_unit_size_valid_in == 1'b0 || i_syntax_full == 1'b0 ||
                     (dsc_coded_size_valid_out == 1'b1 && dsc_coded_size_ready_out == 1'b1))
                 else $error("Syntax FIFO overflow");
             assert (dsc_muxword_valid_in == 1'b0 || i_muxword_full == 1'b0 ||
@@ -209,8 +204,13 @@ module dsce_stream_fifo
                     dsc_coded_size_out <= i_syntax_buffer[i_syntax_read_ptr];
                 end // if
             end else begin
-                if (dsc_coded_size_ready_out == 1'b1 && i_syntax_read_ptr == i_syntax_write_ptr &&
-                    i_syntax_full == 1'b0) begin
+                // read_ptr 指向当前输出项，write_ptr 指向下一空槽。
+                // 消费后 read_ptr_plus_1 追上 write_ptr 才表示 FIFO 变空；原实现用
+                // read_ptr == write_ptr，会把空 FIFO 继续保持 valid 并多消费一项。
+                // 同拍有新写入时 write_ptr 也会前进，输出应继续保持有效。
+                if (dsc_coded_size_ready_out == 1'b1 &&
+                    i_syntax_read_ptr_plus_1 == i_syntax_write_ptr &&
+                    i_syntax_full == 1'b0 && dsc_unit_size_valid_in == 1'b0) begin
                     dsc_coded_size_valid_out <= 1'b0;
                 end // if
                 dsc_coded_size_out <= i_syntax_buffer[i_syntax_read_ptr];

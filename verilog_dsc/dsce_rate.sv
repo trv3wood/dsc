@@ -164,6 +164,7 @@ module dsce_rate
     tDSC_QLEVEL             i_current_qp;
     tDSC_QLEVEL             i_current_qp_minus_1;
     tDSC_QLEVEL             i_current_qp_st;
+    tDSC_QLEVEL             i_flat_qp_pending;
 
     logic                   i_dsc_version_2_active;
     tDSC_QLEVEL             i_prev_qp;
@@ -769,6 +770,7 @@ module dsce_rate
             i_inc_qp_value <= 5'd0;
             i_current_qp <= 5'd0;
             i_current_qp_st <= 5'd0;
+            i_flat_qp_pending <= kDSC_QLEVEL_ZERO;
 
             i_bitsave_mode <= 2'd0;
             i_bitsave_thresh <= 5'd0;
@@ -837,11 +839,14 @@ module dsce_rate
             if (dsc_group_valid_in == 1'b1) begin
                 i_prev_qp <= dsc_flat_qp_in;
                 i_prev_2_qp <= dsc_flat_prev_qp_in;
+                // 下一拍更新 currentQp 时输入总线可能已经属于下一事务，
+                // 因此必须在 valid 当拍锁存本事务的 flatness 调整结果。
+                i_flat_qp_pending <= dsc_flat_qp_in;
             end // if
 
             if (i_valid_pipe[0] == 1'b1) begin
-                i_current_qp_st <= dsce_max_qp(dsc_flat_qp_in, i_min_qp);
-                i_current_qp <= dsc_flat_qp_in;
+                i_current_qp_st <= dsce_max_qp(i_flat_qp_pending, i_min_qp);
+                i_current_qp <= i_flat_qp_pending;
             end // if
 
             // register some inputs

@@ -14,6 +14,8 @@ slice 边界、push/pop 与本地事务计数之间的契约。
 make rtl-formal FORMAL_TASK=prove
 make rtl-formal FORMAL_TASK=cover
 make rtl-formal FORMAL_SUITE=flatness_window FORMAL_TASK=prove
+make rtl-formal FORMAL_SUITE=stream_fifo_acceptance FORMAL_TASK=prove
+make rtl-formal FORMAL_SUITE=stream_fifo_acceptance FORMAL_TASK=cover
 ```
 
 产物默认放在 `/tmp/dsc_formal/`
