@@ -190,7 +190,8 @@ module dsce_vlc
         i_next_flatness_bit = {15'd0, dsc_flatness_in.next_flatness_flag} << i_prefix_size;
         i_flatness_size = (i_group_index == 2'd3) ? {4'b0000, i_next_flatness_check} : 5'd0;
 
-        // PipeS0 的完整语法；ICH 时可与 index 合并，保证无 ready 接口的突发吞吐。
+        // PipeS0 只发送 prefix。ICH index 保持为独立片段，和官方模型的
+        // syntax 边界一致，避免跨 muxword 边界时依赖片段合并等价性。
         i_s0_size = i_prefix_size;
         i_s0_data = i_prefix_data;
         case (i_group_index)
@@ -356,16 +357,10 @@ module dsce_vlc
                 4'b???1:  begin  :  PipeS0
                     dsc_vlc_valid_out <= 1'b1;
                     i_next_flatness_flag <= i_next_flatness_check;
-                    if (dsc_ich_selected_in) begin
-                        dsc_vlc_size_out <= i_s0_size + 5'd5;
-                        dsc_vlc_data_out <= (i_s0_data << 5) | {11'd0, dsc_ich_index_in};
-                        dsc_vlc_last_out <= dsc_predict_last_in;
-                    end else begin
-                        dsc_vlc_size_out <= i_s0_size;
-                        dsc_vlc_data_out <= i_s0_data;
-                        if (i_s0_size == 5'd0)
-                            dsc_vlc_valid_out <= 1'b0;
-                    end
+                    dsc_vlc_size_out <= i_s0_size;
+                    dsc_vlc_data_out <= i_s0_data;
+                    if (i_s0_size == 5'd0)
+                        dsc_vlc_valid_out <= 1'b0;
                 end : PipeS0
 
                 // residual 0 / ICH index
@@ -373,7 +368,9 @@ module dsce_vlc
                     dsc_vlc_valid_out <= 1'b1;
 
                     if (i_ich_selected_in == 1'b1) begin
-                        dsc_vlc_valid_out <= 1'b0;
+                        dsc_vlc_size_out <= 5'd5;
+                        dsc_vlc_data_out <= {11'd0, i_ich_index_in};
+                        dsc_vlc_last_out <= i_pipe_last[1];
                     end else begin
                         dsc_vlc_size_out <= i_residual_size_in;
                         dsc_vlc_data_out <= i_residual_in[0][15:0];

@@ -64,6 +64,8 @@ module dsce_ich_history
     logic                           i_first_line;
     tDSC_PIXEL                      i_ich_entry_buffer [31:0];
     logic   [31:0]                  i_ich_entry_valid;
+    tDSC_PIXEL                      i_ich_mode_entry_next [31:0];
+    logic   [31:0]                  i_ich_mode_valid_next;
     tDSC_PIXEL                      i_line_prev_in [6:0];
     logic                           i_update_valid_in;
 
@@ -136,6 +138,40 @@ module dsce_ich_history
         end : TargetCodeLoop
     end : ICHModeUpdateLogic
 
+    // 官方模型对 ICH 组的三个重建像素按光栅顺序逐个执行 move-to-front。
+    // 仅 0..24 属于可更新历史；25..31 是上一行的动态候选，不参与去重。
+    always_comb begin : ICHMoveToFront
+        i_ich_mode_entry_next = i_ich_entry_buffer;
+        i_ich_mode_valid_next = i_ich_entry_valid;
+
+        for (int px = 0; px < 3; px++) begin
+            int move_loc;
+            logic found_loc;
+
+            move_loc = 24;
+            found_loc = 1'b0;
+            for (int hx = 0; hx < 25; hx++) begin
+                if (!found_loc && !i_ich_mode_valid_next[hx]) begin
+                    move_loc = hx;
+                    found_loc = 1'b1;
+                end else if (!found_loc && i_ich_mode_valid_next[hx] &&
+                             i_ich_mode_entry_next[hx] == dsc_recon_group_in[px]) begin
+                    move_loc = hx;
+                    found_loc = 1'b1;
+                end
+            end
+
+            for (int hx = 24; hx > 0; hx--) begin
+                if (hx <= move_loc) begin
+                    i_ich_mode_entry_next[hx] = i_ich_mode_entry_next[hx-1];
+                    i_ich_mode_valid_next[hx] = i_ich_mode_valid_next[hx-1];
+                end
+            end
+            i_ich_mode_entry_next[0] = dsc_recon_group_in[px];
+            i_ich_mode_valid_next[0] = 1'b1;
+        end
+    end
+
 
     // -------------------------------------------------------
     //  Input source pixel staging for pipeline timing
@@ -199,73 +235,8 @@ module dsce_ich_history
                     end : PredictModeUpdate
 
                     3'b011 : begin : ICHModeUpdate
-                        case (hix) inside
-                            2:  begin
-                                case (i_unique_ich_index)
-                                    3'b110, 3'b101:  begin
-                                        i_ich_entry_buffer[2] <= i_ich_entry_buffer[0];
-                                        i_ich_entry_valid[2] <= i_ich_entry_valid[0];
-                                    end // 2 unique
-
-                                    3'b100:  begin
-                                        i_ich_entry_buffer[2] <= i_ich_entry_buffer[1];
-                                        i_ich_entry_valid[2] <= i_ich_entry_valid[1];
-                                    end // 1 unique
-
-                                    default:  begin
-                                        i_ich_entry_buffer[2] <= dsc_recon_group_in[0];
-                                        i_ich_entry_valid[2] <= 1'b1;
-                                    end // 3 unique
-                                endcase
-                            end // entry 2
-
-                            1:  begin
-                                case (i_unique_ich_index)
-                                    3'b110:  begin
-                                        i_ich_entry_buffer[1] <= dsc_recon_group_in[1];
-                                        i_ich_entry_valid[1] <= 1'b1;
-                                    end // 2 unique, ABA
-                                    3'b101:  begin
-                                        i_ich_entry_buffer[1] <= dsc_recon_group_in[0];
-                                        i_ich_entry_valid[1] <= 1'b1;
-                                    end // 2 unique, AAB
-                                    3'b100:  begin
-                                        i_ich_entry_buffer[1] <= i_ich_entry_buffer[0];
-                                        i_ich_entry_valid[1] <= i_ich_entry_valid[0];
-                                    end // 1 unique
-                                    default:  begin
-                                        i_ich_entry_buffer[1] <= dsc_recon_group_in[1];
-                                        i_ich_entry_valid[1] <= 1'b1;
-                                    end // 3 unique
-                                endcase
-                            end // entry 1
-
-                            0:  begin
-                                i_ich_entry_buffer[0] <= dsc_recon_group_in[2];
-                                i_ich_entry_valid[0] <= 1'b1;
-                            end // entry 0
-
-                            [3:31]:  begin
-                                case (i_target_codes[hix])
-                                    3'b100:  begin
-                                        i_ich_entry_buffer[hix] <= i_ich_entry_buffer[hix-3];
-                                        i_ich_entry_valid[hix] <= i_ich_entry_valid[hix-3];
-                                    end // distance = 0
-                                    3'b010:  begin
-                                        i_ich_entry_buffer[hix] <= i_ich_entry_buffer[hix-2];
-                                        i_ich_entry_valid[hix] <= i_ich_entry_valid[hix-2];
-                                    end // distance = 1
-                                    3'b001:  begin
-                                        i_ich_entry_buffer[hix] <= i_ich_entry_buffer[hix-1];
-                                        i_ich_entry_valid[hix] <= i_ich_entry_valid[hix-1];
-                                    end // distance = 1
-                                    default:  begin
-                                        i_ich_entry_buffer[hix] <= i_ich_entry_buffer[hix];
-                                        i_ich_entry_valid[hix] <= i_ich_entry_valid[hix];
-                                    end // distance = 0
-                                endcase
-                            end // all other entries
-                        endcase
+                        i_ich_entry_buffer[hix] <= i_ich_mode_entry_next[hix];
+                        i_ich_entry_valid[hix] <= i_ich_mode_valid_next[hix];
                     end : ICHModeUpdate
 
                     default:  ;     // no update
@@ -276,4 +247,3 @@ module dsce_ich_history
 
 
 endmodule : dsce_ich_history
-

@@ -63,43 +63,32 @@ module dsce_flat_check
                 end else begin
                     tDSC_PIXEL check_min;
                     tDSC_PIXEL check_max;
+                    tDSC_PIXEL check_diff;
 
-                    // Check 1 对应 C model 的 [hPos, hPos+3]：
-                    // 当前目标组的末像素，加上下一个完整 group。
-                    check_min.y = dsce_min_2(i_group_0[2].y,
-                        dsce_min_3(i_group_1[0].y, i_group_1[1].y, i_group_1[2].y));
-                    check_min.co = dsce_min_2(i_group_0[2].co,
-                        dsce_min_3(i_group_1[0].co, i_group_1[1].co, i_group_1[2].co));
-                    check_min.cg = dsce_min_2(i_group_0[2].cg,
-                        dsce_min_3(i_group_1[0].cg, i_group_1[1].cg, i_group_1[2].cg));
-                    check_max.y = dsce_max_2(i_group_0[2].y,
-                        dsce_max_3(i_group_1[0].y, i_group_1[1].y, i_group_1[2].y));
-                    check_max.co = dsce_max_2(i_group_0[2].co,
-                        dsce_max_3(i_group_1[0].co, i_group_1[1].co, i_group_1[2].co));
-                    check_max.cg = dsce_max_2(i_group_0[2].cg,
-                        dsce_max_3(i_group_1[0].cg, i_group_1[1].cg, i_group_1[2].cg));
-                    dsc_check_diff_out[1] <= check_max - check_min;
+                    // hPos 在 C model 中指向当前 group 的末像素，因此 Check 1
+                    // 覆盖当前末像素与下一完整 group。
+                    check_min.y = dsce_min_2(i_group_0[2].y, dsce_min_3(i_group_1[0].y, i_group_1[1].y, i_group_1[2].y));
+                    check_min.co = dsce_min_2(i_group_0[2].co, dsce_min_3(i_group_1[0].co, i_group_1[1].co, i_group_1[2].co));
+                    check_min.cg = dsce_min_2(i_group_0[2].cg, dsce_min_3(i_group_1[0].cg, i_group_1[1].cg, i_group_1[2].cg));
+                    check_max.y = dsce_max_2(i_group_0[2].y, dsce_max_3(i_group_1[0].y, i_group_1[1].y, i_group_1[2].y));
+                    check_max.co = dsce_max_2(i_group_0[2].co, dsce_max_3(i_group_1[0].co, i_group_1[1].co, i_group_1[2].co));
+                    check_max.cg = dsce_max_2(i_group_0[2].cg, dsce_max_3(i_group_1[0].cg, i_group_1[1].cg, i_group_1[2].cg));
+                    check_diff.y = check_max.y - check_min.y;
+                    check_diff.co = check_max.co - check_min.co;
+                    check_diff.cg = check_max.cg - check_min.cg;
+                    dsc_check_diff_out[1] <= check_diff;
 
-                    // Check 2 对应 [hPos+1, hPos+6]：后续两个完整 group。
-                    check_min.y = dsce_min_2(
-                        dsce_min_3(i_group_1[0].y, i_group_1[1].y, i_group_1[2].y),
-                        dsce_min_3(i_new_group[0].y, i_new_group[1].y, i_new_group[2].y));
-                    check_min.co = dsce_min_2(
-                        dsce_min_3(i_group_1[0].co, i_group_1[1].co, i_group_1[2].co),
-                        dsce_min_3(i_new_group[0].co, i_new_group[1].co, i_new_group[2].co));
-                    check_min.cg = dsce_min_2(
-                        dsce_min_3(i_group_1[0].cg, i_group_1[1].cg, i_group_1[2].cg),
-                        dsce_min_3(i_new_group[0].cg, i_new_group[1].cg, i_new_group[2].cg));
-                    check_max.y = dsce_max_2(
-                        dsce_max_3(i_group_1[0].y, i_group_1[1].y, i_group_1[2].y),
-                        dsce_max_3(i_new_group[0].y, i_new_group[1].y, i_new_group[2].y));
-                    check_max.co = dsce_max_2(
-                        dsce_max_3(i_group_1[0].co, i_group_1[1].co, i_group_1[2].co),
-                        dsce_max_3(i_new_group[0].co, i_new_group[1].co, i_new_group[2].co));
-                    check_max.cg = dsce_max_2(
-                        dsce_max_3(i_group_1[0].cg, i_group_1[1].cg, i_group_1[2].cg),
-                        dsce_max_3(i_new_group[0].cg, i_new_group[1].cg, i_new_group[2].cg));
-                    dsc_check_diff_out[2] <= check_max - check_min;
+                    // Check 2 覆盖 hPos+1 到 hPos+6，即后续两个完整 group。
+                    check_min.y = dsce_min_2(dsce_min_3(i_group_1[0].y, i_group_1[1].y, i_group_1[2].y), dsce_min_3(i_new_group[0].y, i_new_group[1].y, i_new_group[2].y));
+                    check_min.co = dsce_min_2(dsce_min_3(i_group_1[0].co, i_group_1[1].co, i_group_1[2].co), dsce_min_3(i_new_group[0].co, i_new_group[1].co, i_new_group[2].co));
+                    check_min.cg = dsce_min_2(dsce_min_3(i_group_1[0].cg, i_group_1[1].cg, i_group_1[2].cg), dsce_min_3(i_new_group[0].cg, i_new_group[1].cg, i_new_group[2].cg));
+                    check_max.y = dsce_max_2(dsce_max_3(i_group_1[0].y, i_group_1[1].y, i_group_1[2].y), dsce_max_3(i_new_group[0].y, i_new_group[1].y, i_new_group[2].y));
+                    check_max.co = dsce_max_2(dsce_max_3(i_group_1[0].co, i_group_1[1].co, i_group_1[2].co), dsce_max_3(i_new_group[0].co, i_new_group[1].co, i_new_group[2].co));
+                    check_max.cg = dsce_max_2(dsce_max_3(i_group_1[0].cg, i_group_1[1].cg, i_group_1[2].cg), dsce_max_3(i_new_group[0].cg, i_new_group[1].cg, i_new_group[2].cg));
+                    check_diff.y = check_max.y - check_min.y;
+                    check_diff.co = check_max.co - check_min.co;
+                    check_diff.cg = check_max.cg - check_min.cg;
+                    dsc_check_diff_out[2] <= check_diff;
 
                     dsc_group_valid_out <= 1'b1;
                     dsc_group_last_out <= i_flush_count == 2'd1;

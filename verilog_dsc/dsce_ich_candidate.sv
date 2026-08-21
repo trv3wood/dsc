@@ -162,22 +162,18 @@ module dsce_ich_candidate
     // -------------------------------------------------------
     always_comb begin : CandidateIndexSelect
         for (int cx = 0; cx < 3; cx++) begin : CandidateIndexLoop
-            // stage 1
-            dsce_min_sad4('{5'd31, 5'd30, 5'd29, 5'd28}, i_weighted_sad[cx][31:28], i_min_index_stage_1[cx][7], i_min_sad_stage_1[cx][7]);
-            dsce_min_sad4('{5'd27, 5'd26, 5'd25, 5'd24}, i_weighted_sad[cx][27:24], i_min_index_stage_1[cx][6], i_min_sad_stage_1[cx][6]);
-            dsce_min_sad4('{5'd23, 5'd22, 5'd21, 5'd20}, i_weighted_sad[cx][23:20], i_min_index_stage_1[cx][5], i_min_sad_stage_1[cx][5]);
-            dsce_min_sad4('{5'd19, 5'd18, 5'd17, 5'd16}, i_weighted_sad[cx][19:16], i_min_index_stage_1[cx][4], i_min_sad_stage_1[cx][4]);
-            dsce_min_sad4('{5'd15, 5'd14, 5'd13, 5'd12}, i_weighted_sad[cx][15:12], i_min_index_stage_1[cx][3], i_min_sad_stage_1[cx][3]);
-            dsce_min_sad4('{5'd11, 5'd10, 5'd9,  5'd8 }, i_weighted_sad[cx][11:8],  i_min_index_stage_1[cx][2], i_min_sad_stage_1[cx][2]);
-            dsce_min_sad4('{5'd7,  5'd6,  5'd5,  5'd4 }, i_weighted_sad[cx][7:4],   i_min_index_stage_1[cx][1], i_min_sad_stage_1[cx][1]);
-            dsce_min_sad4('{5'd3,  5'd2,  5'd1,  5'd0 }, i_weighted_sad[cx][3:0],   i_min_index_stage_1[cx][0], i_min_sad_stage_1[cx][0]);
+            logic [16:0] best_sad;
 
-            // stage 2
-            dsce_min_sad4(i_min_index_stage_1[cx][7:4], i_min_sad_stage_1[cx][7:4], i_min_index_stage_2[cx][1], i_min_sad_stage_2[cx][1]);
-            dsce_min_sad4(i_min_index_stage_1[cx][3:0], i_min_sad_stage_1[cx][3:0], i_min_index_stage_2[cx][0], i_min_sad_stage_2[cx][0]);
-
-            // selected index
-            i_ich_index_out[cx] = (i_min_sad_stage_2[cx][1] < i_min_sad_stage_2[cx][0]) ? i_min_index_stage_2[cx][1] : i_min_index_stage_2[cx][0];
+            // 官方模型按 index 递增遍历，仅比较 valid entry，并用严格小于；
+            // 因此同 SAD 时必须保留最小 index。
+            best_sad = 17'h1ffff;
+            i_ich_index_out[cx] = 5'd0;
+            for (int ix = 0; ix < 32; ix++) begin
+                if (dsc_ich_entry_valid_in[ix] && i_weighted_sad[cx][ix] < best_sad) begin
+                    best_sad = i_weighted_sad[cx][ix];
+                    i_ich_index_out[cx] = ix[4:0];
+                end
+            end
         end : CandidateIndexLoop
     end : CandidateIndexSelect
 

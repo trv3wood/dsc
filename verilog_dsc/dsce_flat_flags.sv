@@ -214,6 +214,7 @@ module dsce_flat_flags
             dsc_group_last_out <= 1'b0;
             dsc_group_out <= '{default: kDSC_PIXEL_INIT};
             dsc_vlc_flat_flags_out <= kDSC_FLAT_FLAGS_INIT;
+            dsc_ich_next_is_very_flat <= 1'b0;
 
             i_stage_valid <= 3'b000;
             i_stage_last <= 3'b000;
@@ -231,6 +232,7 @@ module dsce_flat_flags
             // ----- default signal states ----- //
             dsc_group_valid_out <= 1'b0;
             dsc_group_last_out <= 1'b0;
+            dsc_ich_next_is_very_flat <= 1'b0;
             i_flush_group <= 1'b0;
             i_stage_valid <= 3'b000;
             i_stage_last <= 3'b000;
@@ -274,6 +276,12 @@ module dsce_flat_flags
                     dsc_group_out <= i_super_group_0;
                     dsc_group_last_out <= (i_flush_count == 3'd2) ? 1'b1 : 1'b0;
                     dsc_vlc_flat_flags_out <= kDSC_FLAT_FLAGS_INIT;
+                    // ICH 使用当前原图窗口的 IsOrigFlatHIndex 结果，不能复用
+                    // 经过 supergroup 选择后的码流 flatness 标志。
+                    dsc_ich_next_is_very_flat <= i_dsc_version_2_active &&
+                        ((i_very_flat_check_1 == 3'b111) ||
+                         ((i_somewhat_flat_check_1 != 3'b111) &&
+                          (i_very_flat_check_2 == 3'b111)));
 
                     dsc_vlc_flat_flags_out.group_flatness_type <=
                         (i_current_first_flat_valid && i_output_supergroup_index == i_current_first_flat) ?
@@ -331,51 +339,6 @@ module dsce_flat_flags
 
         end // if
     end : PipelineLogic
-
-
-    // -------------------------------------------------------
-    //  next group is very flat determination for ICH
-    // -------------------------------------------------------
-    always_ff@(posedge dsc_clk or negedge dsc_reset_n) begin : ICHFlags
-        if (dsc_reset_n == 1'b0) begin
-            dsc_ich_next_is_very_flat <= 1'b0;
-
-            i_ich_stage_valid <= 2'b00;
-            i_ich_qlevel_y <= kDSC_QLEVEL_ZERO;
-            i_ich_qlevel_c <= kDSC_QLEVEL_ZERO;
-            i_somewhat_flat_threshold_y <= 16'h0000;
-            i_somewhat_flat_threshold_c <= 16'h0000;
-
-        end else begin
-
-            // ----- default signal states ----- //
-            i_ich_stage_valid <= 2'b00;
-
-            // ----- stage 0, very flat checks 1 and 2 ----- //
-            if (dsc_group_valid_out == 1'b1) begin
-                i_ich_stage_valid[1] <= 1'b1;
-                i_ich_qlevel_y <= dsce_qp_to_qlevel(kBPC_Y, i_bits_per_component, i_ich_qp);
-                i_ich_qlevel_c <= dsce_qp_to_qlevel(kBPC_C, i_bits_per_component, i_ich_qp);
-            end // if
-
-            // ----- stage 1, register somewhat flat threshold ----- //
-            if (i_ich_stage_valid[1] == 1'b1) begin
-                i_ich_stage_valid[2] <= 1'b1;
-                i_somewhat_flat_threshold_y <= dsce_max_2(i_very_flat_thresh, i_quant_divisor_y);
-                i_somewhat_flat_threshold_c <= dsce_max_2(i_very_flat_thresh, i_quant_divisor_c);
-            end // if
-
-            // ----- stage 2, register all checks ----- //
-            if (i_ich_stage_valid[2] == 1'b1) begin
-                if (i_very_flat_check_1 == 3'b111 || (i_somewhat_flat_check_1 != 3'b111 && i_very_flat_check_2 == 3'b111)) begin
-                    dsc_ich_next_is_very_flat <= i_dsc_version_2_active;
-                end else begin
-                    dsc_ich_next_is_very_flat <= 1'b0;
-                end // if
-            end // if
-
-        end // if
-    end : ICHFlags
 
 
     // -------------------------------------------------------

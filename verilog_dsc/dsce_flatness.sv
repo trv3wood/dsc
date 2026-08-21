@@ -66,6 +66,70 @@ module dsce_flatness
     logic                   i_group_last_check;
     tDSC_PIXEL              i_group_check [2:0];
     tDSC_PIXEL              i_group_check_diff [2:1];
+    logic                   i_group_valid_flags;
+    logic                   i_group_last_flags;
+    tDSC_PIXEL              i_group_flags [2:0];
+    tDSC_PIXEL              i_group_diff_flags [2:1];
+    logic [3:0]             i_check_write_ptr;
+    logic [3:0]             i_check_read_ptr;
+    logic [4:0]             i_check_count;
+    logic [1:0]             i_check_cooldown;
+    logic                   i_check_last_fifo [15:0];
+    tDSC_PIXEL              i_check_group_fifo [15:0][2:0];
+    tDSC_PIXEL              i_check_diff_fifo [15:0][2:1];
+
+    // flat_flags 内含依赖 RC QP 的 supergroup 判定。flat_check 在行尾可能连续
+    // 产生 lookahead 结果，因此必须在判定前恢复每组四拍的反馈节奏。
+    // 若在判定后节流，像素事务虽能对齐，判定采到的却仍是前一事务的 QP。
+    always_ff @(posedge dsc_clk or negedge dsc_reset_n) begin : FlatCheckScheduler
+        logic check_pop;
+
+        if (!dsc_reset_n) begin
+            i_group_valid_flags <= 1'b0;
+            i_group_last_flags <= 1'b0;
+            i_group_flags <= '{default: kDSC_PIXEL_INIT};
+            i_group_diff_flags <= '{default: kDSC_PIXEL_INIT};
+            i_check_write_ptr <= 4'd0;
+            i_check_read_ptr <= 4'd0;
+            i_check_count <= 5'd0;
+            i_check_cooldown <= 2'd0;
+            i_check_last_fifo <= '{default: 1'b0};
+            i_check_group_fifo <= '{default: '{default: kDSC_PIXEL_INIT}};
+            i_check_diff_fifo <= '{default: '{default: kDSC_PIXEL_INIT}};
+        end else begin
+            check_pop = (i_check_count != 0) && (i_check_cooldown == 0);
+            i_group_valid_flags <= 1'b0;
+            i_group_last_flags <= 1'b0;
+
+            if (i_check_cooldown != 0)
+                i_check_cooldown <= i_check_cooldown - 1'b1;
+
+            if (i_group_valid_check) begin
+                i_check_last_fifo[i_check_write_ptr] <= i_group_last_check;
+                i_check_group_fifo[i_check_write_ptr] <= i_group_check;
+                i_check_diff_fifo[i_check_write_ptr] <= i_group_check_diff;
+                i_check_write_ptr <= i_check_write_ptr + 1'b1;
+            end
+
+            if (check_pop) begin
+                i_group_valid_flags <= 1'b1;
+                i_group_last_flags <= i_check_last_fifo[i_check_read_ptr];
+                i_group_flags <= i_check_group_fifo[i_check_read_ptr];
+                i_group_diff_flags <= i_check_diff_fifo[i_check_read_ptr];
+                i_check_read_ptr <= i_check_read_ptr + 1'b1;
+                i_check_cooldown <= 2'd3;
+            end
+
+            case ({i_group_valid_check, check_pop})
+                2'b10: i_check_count <= i_check_count + 1'b1;
+                2'b01: i_check_count <= i_check_count - 1'b1;
+                default: i_check_count <= i_check_count;
+            endcase
+
+            assert (!i_group_valid_check || i_check_count < 5'd16)
+                else $error("Flatness check scheduler overflow");
+        end
+    end
 
 
     // ------------------------------------------------------------------------------------------------------------
@@ -102,10 +166,10 @@ module dsce_flatness
         .cfg_rc_range_max_qp_14     (cfg_rc_range_max_qp_14),
         // input data path from the flatness checks
         .dsc_start_of_slice         (dsc_start_of_slice),
-        .dsc_group_valid_in         (i_group_valid_check),
-        .dsc_group_last_in          (i_group_last_check),
-        .dsc_group_in               (i_group_check),
-        .dsc_check_diff_in          (i_group_check_diff),
+        .dsc_group_valid_in         (i_group_valid_flags),
+        .dsc_group_last_in          (i_group_last_flags),
+        .dsc_group_in               (i_group_flags),
+        .dsc_check_diff_in          (i_group_diff_flags),
         // quantization level
         .dsc_primary_qp             (dsc_primary_qp),
         // output data path
@@ -117,4 +181,3 @@ module dsce_flatness
     );
 
 endmodule : dsce_flatness
-

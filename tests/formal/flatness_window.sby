@@ -1,0 +1,18 @@
+[tasks]
+prove
+
+[options]
+prove: mode prove
+prove: depth 8
+
+[engines]
+prove: smtbmc boolector
+
+[script]
+read_slang --top flatness_window_formal dsce_defs_pkg.sv dsce_flat_check.sv flatness_window_formal.sv
+prep -top flatness_window_formal
+
+[files]
+verilog_dsc/dsce_defs_pkg.sv
+verilog_dsc/dsce_flat_check.sv
+tests/formal/flatness_window_formal.sv
