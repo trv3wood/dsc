@@ -15,7 +15,7 @@ VESA DSC 1.2 编码器的 SystemVerilog RTL 实现（`verilog_dsc/`），
 ## 关键文档
 
 - `tests/verilator/README.md` — RTL 验证范围与缺陷定位过程
-- `tests/verilator/rtl_fix_log.md` — 从早期基线到 HEAD 的 RTL 修复清单
+- `tests/verilator/README.md` — 当前回归入口、已知失败和调试方法
 
 ## 常用命令
 

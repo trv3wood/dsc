@@ -91,14 +91,14 @@ module tb_dsc_e2e;
     int           predict_input_group = 0;
 
 `ifdef DSC_VCD_DUMP
-    // make rtl-top-trace 传入；普通 make rtl-top 不启用，避免无谓的波形写入。
+    // make rtl-top RTL_TRACE=1 传入；普通 make rtl-top 不启用，避免无谓的波形写入。
     initial begin
         $dumpfile("tests/verilator/generated/rtl_e2e_trace.vcd");
         $dumpvars(0, tb_dsc_e2e);
     end
 `endif
 
-`ifdef DSC_VLC_CAPTURE
+`ifdef DSC_E2E_DEBUG
     integer       vlc_capture_file;
     int           vlc_capture_count = 0;
     int           vlc_capture_gap = 0;
@@ -150,7 +150,7 @@ module tb_dsc_e2e;
     end
 `endif
 
-`ifdef DSC_LUM_FRAG_CAPTURE
+`ifdef DSC_E2E_DEBUG
     // 转储 RTL ssp0 (luma) VLC 输出片段，用于离线重建位流并与 C model 对比。
     integer       lum_frag_file;
     int           lum_frag_count = 0;
@@ -186,7 +186,7 @@ module tb_dsc_e2e;
     end
 `endif
 
-`ifdef DSC_BP_CAPTURE
+`ifdef DSC_E2E_DEBUG
     // 转储真实顶层的 dsce_bpvector 输入事务，用于独立 replay 对比 RTL 与 function model。
     integer       bp_capture_file;
     int           bp_capture_count = 0;

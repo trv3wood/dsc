@@ -168,6 +168,8 @@ module tb_dsc_e2e_multi;
             mux_last_ok++;
     end
 
+`ifdef DSC_E2E_DEBUG
+    // 深层层级探针仅供临时定位，不参与标准回归判定。
     // 逐 processor 捕获 muxword 流到文件，供离线与 C model 对比定位编码/交织问题。
     integer       proc_mw_file [kSPC];
     int           proc_mw_count [kSPC];
@@ -187,6 +189,7 @@ module tb_dsc_e2e_multi;
             end
         end
     end
+`endif
 
     // AXI 输出（bypass 后，每拍 6 bytes 位于低位 48 bit）逐字节比对。
     always @(posedge axi_clk) begin : TopScoreboard
@@ -233,6 +236,7 @@ module tb_dsc_e2e_multi;
     always @(posedge axi_clk)
         if (async_reset_n && axi_tvalid_in && axi_tready_in) accepted_input++;
 
+`ifdef DSC_E2E_DEBUG
     // 捕获 slice0 的 VLC 片段流({size,data})，与 c_vlc_trace.txt 逐片段对比定位首分歧 group。
     integer vlc_file;
     int     vlc_frag_cnt [3];
@@ -454,6 +458,8 @@ module tb_dsc_e2e_multi;
         end
     end
 
+`endif
+
     // 以 <case> 名读取向量文件；空则使用 generated/。
     string  base_path;
     initial begin
@@ -511,7 +517,12 @@ module tb_dsc_e2e_multi;
 
         apb_write32(12'h008, 32'd4);              // pixels per cycle
         apb_write32(12'h030, 32'd4);              // output mode（48-bit 原生）
-        apb_write32(12'h040, 32'd7);              // slice width alignment
+        // 每位对应尾组中的一个有效像素；整除时三个像素均有效。
+        case (slice_width % 3)
+            1: apb_write32(12'h040, 32'd1);
+            2: apb_write32(12'h040, 32'd3);
+            default: apb_write32(12'h040, 32'd7);
+        endcase
         apb_write32(12'h044, slices_per_line);    // slices per line
         apb_write32(12'h048, slices_per_proc);    // slices per processor
         apb_write32(12'h04c, nproc);              // slice processor count
@@ -600,8 +611,10 @@ module tb_dsc_e2e_multi;
 
         $display("RESULT accepted=%0d out=%0d top_mis=%0d top_excess=%0d mux=%0d mux_mis=%0d",
                  accepted_input, out_count, top_mis, top_excess, mux_count, mux_mis);
+`ifdef DSC_E2E_DEBUG
         $display("PROC_MW cnt=%0d/%0d/%0d/%0d",
                  proc_mw_count[0], proc_mw_count[1], proc_mw_count[2], proc_mw_count[3]);
+`endif
         $display("DIAG partition_v=%0d/%0d/%0d/%0d mux_ready=%0d/%0d/%0d/%0d last_in=%0d/%0d/%0d/%0d select_chg=%0d new_frame=%0d",
                  part_valid[0], part_valid[1], part_valid[2], part_valid[3],
                  mux_ready[0], mux_ready[1], mux_ready[2], mux_ready[3],
