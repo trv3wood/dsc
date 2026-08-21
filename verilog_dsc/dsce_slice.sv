@@ -98,6 +98,7 @@ module dsce_slice
 
     tDSC_QLEVEL                 i_rc_primary_qp, i_rc_primary_qp_next, i_rc_primary_qp_prev, i_rc_prev_qp;
     tDSC_QLEVEL                 i_primary_qp, i_primary_qp_rate, i_primary_qp_res;
+    tDSC_QLEVEL                 i_encoding_qp;
     tDSC_QLEVEL                 i_prev_qp, i_prev_qp_rate;
     tDSC_QLEVEL                 i_rate_feedback_qp, i_rate_feedback_prev_qp;
     tDSC_QLEVEL                 i_flat_override_qp, i_flat_override_prev_qp;
@@ -172,6 +173,10 @@ module dsce_slice
                 end
             end
         end
+
+        // 上一事务完成与下一事务进入 prediction 可能同拍。此时 flatness 的组合
+        // feedback 已经是下一事务应使用的 QP，不能等寄存器下一拍提交后再查表。
+        i_encoding_qp = i_valid_fd ? i_rate_feedback_qp : i_primary_qp;
     end : SignalMap
 
     always_ff @(posedge dsc_clk or negedge dsc_reset_n) begin : FlatQpOverride
@@ -296,7 +301,7 @@ module dsce_slice
         .cfg_pps                    (cfg_pps),
         .cfg_rc_range_max_qp_14     (cfg_rcps.rc_range_parameters[14][9:5]),
         // quantization level
-        .dsc_primary_qp             (i_primary_qp),
+        .dsc_primary_qp             (i_encoding_qp),
         // source pixel path
         .dsc_start_of_slice         (i_start_of_slice_slb),
         .dsc_source_valid_in        (i_valid_slb),
@@ -372,7 +377,7 @@ module dsce_slice
         .dsc_group_valid_in         (i_valid_fd),
         .dsc_group_last_in          (i_last_fd),
         .dsc_group_in               (i_group_fd),
-        .dsc_primary_qp             (i_primary_qp),
+        .dsc_primary_qp             (i_encoding_qp),
         .dsc_qlevel_y_in            (i_qlevel_y),
         .dsc_qlevel_c_in            (i_qlevel_c),
         .dsc_force_mpp_in           (i_force_mpp),
@@ -547,7 +552,7 @@ module dsce_slice
         .dsc_reset_n                (dsc_reset_n),
         .dsc_pps_update             (dsc_pps_update),
         .dsc_qp_valid_in            (i_valid_fd),
-        .dsc_primary_qp             (i_primary_qp),
+        .dsc_primary_qp             (i_encoding_qp),
         .dsc_primary_qp_res         (i_primary_qp_res),
         .dsc_qlevel_y               (i_qlevel_y),
         .dsc_qlevel_c               (i_qlevel_c),
