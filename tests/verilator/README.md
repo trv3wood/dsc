@@ -1,5 +1,21 @@
 # Verilator RTL Verification
 
+## 分层回归
+
+- `make test`：lint、smoke、4 个 RTL e2e case 和 2 个小尺寸 C model case。
+- `make test-full`：增加多 seed、多 slice、输入空泡、输出背压、高位深、码率以及
+  native 4:2:2/4:2:0；不使用 XFAIL，任何失败均返回非零。
+- `make official-regression`：从 `~/Work/dsc/Display Stream Compression (DSC) Test
+  Results-selected.zip` 提取五张固定 VESA cropped BMP，以 `bmptoppm` 转换后由冻结
+  C model 生成 golden，再运行 RTL payload 对拍；需要安装 `netpbm`。
+
+RTL 单 case 可用
+`python3 tools/run_rtl_regression.py --profile full --cases two_slice_flow` 复现，日志位于
+`/tmp/dsc_rtl_regression/`。像素 seed 和流控 seed 相互独立，默认流控 seed 为像素
+seed 异或 `0x9e3779b9`。C model 可用
+`python3 tools/run_dsc_regression.py --profile full --cases depth_16bpc`，产物位于
+`/tmp/dsc_regression/`。
+
 ## 已验证范围
 
 `make rtl-lint` 对 `dsc_encoder` 顶层执行完整 elaboration 和 lint。归档中的 `dsce_quant.sv` 未被顶层引用，并依赖未定义类型，因此不在有效设计 filelist 中。
@@ -11,13 +27,13 @@
 - 编码器关闭时的 192-bit bypass 数据一致性；
 - AXI 输出 backpressure 期间 `valid` 和数据保持。
 
-`make rtl-e2e` 使用固定 seed `0x445343` 生成 96×108、RGB 8bpc、12bpp 的
+`make rtl-top` 使用固定 seed `0x445343` 生成 96×108、RGB 8bpc、12bpp 的
 可复现伪随机输入，用 C model
 产生 PPS 和 golden payload，再通过 APB 配置 RTL、送入整帧像素并逐字节比较输出。
 生成物位于忽略的 `tests/verilator/generated/`，不应提交。
 
 用 `python3 tests/verilator/generate_golden.py --seed 0x1234` 可覆盖默认 seed；
-通过 Makefile 运行完整对拍时使用 `make rtl-e2e GOLDEN_SEED=0x1234`。
+通过 Makefile 运行完整对拍时使用 `make rtl-top GOLDEN_SEED=0x1234`。
 
 当前该测试预期失败，用于复现待修 RTL。修正测试平台的逐行输入节流和 PPS posted
 write 间隔后，RTL 能处理完整的 3456 groups，且正确加载 DSC 1.2 PPS。当前首个
@@ -75,7 +91,7 @@ last 被 stage 3 清零覆盖、提前 flush 以及 `group_flatness_type` 使用
 
 ### VLC function-model 替换
 
-`make rtl-e2e-vlc-model GOLDEN_PATTERN=flatness GOLDEN_SEED=0x445343` 在
+`make rtl-top-vlc-model GOLDEN_PATTERN=flatness GOLDEN_SEED=0x445343` 在
 `dsce_format.gen_vlc` 的实例边界，将三个完整 `dsce_vlc` 替换为端口等价的
 `dsce_vlc_function_model`。原 RTL 内部不含 DPI override。SystemVerilog adapter 只负责
 打包公开输入和寄存输出；C++ 模型独立维护 `previous_qlevel`、`previous_ich`、
@@ -141,10 +157,10 @@ flatness 行尾 flush 会突发输出，而 prediction、重建反馈及 MMAP �
 全部 32 groups 的 rate 状态与 C model 对齐，原 group 25 差异消失。这属于恢复已有下游
 事务契约，不注入 golden 数据。
 
-`make rtl-e2e-bp-model` 用完整 BP DPI 模型替换 `dsce_bpvector` 后，首个预测边界差异由
+`make rtl-top-bp-model` 用完整 BP DPI 模型替换 `dsce_bpvector` 后，首个预测边界差异由
 group 37 推进到 group 39。追踪发现 group 37 的 Co 选择 MPP 时，真实 `dsce_mpp` 延迟后
 读取了变化后的实时 right/group 输入，使 predictor 从应有的 258 变为 262。新增
-`make rtl-e2e-bp-mpp-model` 完整替换三个 MPP 实例，首 payload 差异由 byte 305 推进到
+`make rtl-top-bp-mpp-model` 完整替换三个 MPP 实例，首 payload 差异由 byte 305 推进到
 byte 2255。真实 MPP 改为在 valid 当拍锁存计算结果并随 valid 流水后，获得相同推进效果。
 
 之后 group 385 暴露 line-last bit-save 状态差异：C model 的 DSC 1.2 行末强制 flat QP
@@ -159,7 +175,7 @@ byte 2255。真实 MPP 改为在 valid 当拍锁存计算结果并随 valid 流�
 
 ### ICH function model、码控与 muxword 链路
 
-在 BP+ICH 完整替换基线上验证并修复了五个独立缺陷，`make rtl-e2e-bp-ich-model`
+在 BP+ICH 完整替换基线上验证并修复了五个独立缺陷，`make rtl-top-bp-ich-model`
 现对 seed `0x445343` 端到端 PASS（15552 bytes 逐字节一致，SSP muxword 0 失配）。
 
 1. **ICH function model 的 `ceil_log2` 位宽语义**。C model (`dsc_utils.c`) 返回
@@ -183,13 +199,13 @@ byte 2255。真实 MPP 改为在 valid 当拍锁存计算结果并随 valid 流�
 
 完整 RTL（不替换任何子模块）首差异仍锁定在全局 group 37，由 `dsce_bpvector`
 无条件清零 `dsc_use_bp` 且未接入预测器所致；在真实 RTL 实现 BP search/predict
-之前，`rtl-e2e-bp-model` 系基线仍是可信上游。修复 BP 后应恢复真实 ICH 与 VLC，
+之前，`rtl-top-bp-model` 系基线仍是可信上游。修复 BP 后应恢复真实 ICH 与 VLC，
 再跑端到端、flatness replay 和多 seed 回归。
 
 ### 真实 BP vector 实现
 
 重写 `dsce_bpvector` 使其与参考模型 `BlockPredSearch` 及已验证的 function model 完全一致。
-`make rtl-e2e-ich-model`（真实 BP + ICH function model）端到端 PASS；独立
+`make rtl-top-ich-model`（真实 BP + ICH function model）端到端 PASS；独立
 `make rtl-bp-replay` 对 3456 groups 的 use_bp/vector/predict/residual 全部 0 失配。
 修复要点：
 
@@ -213,7 +229,7 @@ byte 2255。真实 MPP 改为在 valid 当拍锁存计算结果并随 valid 流�
 
 ### ICH 行末、VLC 时序与码控门控修复
 
-在完整 RTL 基线上验证并修复了三个独立缺陷，`make rtl-e2e` 现对 seed `0x445343`
+在完整 RTL 基线上验证并修复了三个独立缺陷，`make rtl-top` 现对 seed `0x445343`
 端到端 PASS（15552 bytes 逐字节一致，SSP muxword 0 失配），且 `rtl-flatness-replay`
 与 `rtl-bp-replay` 均 0 失配。
 
@@ -244,9 +260,9 @@ byte 2255。真实 MPP 改为在 valid 当拍锁存计算结果并随 valid 流�
 
 ### seed `0x1234` 剩余差异与行末 QP 回退修复
 
-`make rtl-e2e GOLDEN_SEED=0x1234` 全 RTL 现端到端 PASS（15552 bytes 逐字节一致，
+`make rtl-top GOLDEN_SEED=0x1234` 全 RTL 现端到端 PASS（15552 bytes 逐字节一致，
 仅 ssp0 前 4 个 VLC fragment 与 C model 的片段粒度假失配，不影响打包后的 byte
-流，与 seed `0x445343` 的 muxword 0 失配同类）。`rtl-e2e`（默认 seed）、
+流，与 seed `0x445343` 的 muxword 0 失配同类）。`rtl-top`（默认 seed）、
 `rtl-flatness-replay` 与 `rtl-bp-replay` 均 0 失配。
 
 此前首个 VLC 输入差异在 group 1889/2048 附近，根因是码控 QP 边界，不是 ICH
@@ -271,8 +287,8 @@ A/B 验证：单独还原三个 RTL 文件（HEAD 状态）重跑 seed `0x1234` 
 真实 ICH、VLC 与 BP 均未替换。
 
 ```sh
-make rtl-e2e GOLDEN_SEED=0x1234       # PASS
-make rtl-e2e                           # PASS (seed 0x445343)
+make rtl-top GOLDEN_SEED=0x1234       # PASS
+make rtl-top                           # PASS (seed 0x445343)
 make rtl-flatness-replay               # 0 失配
 make rtl-bp-replay                     # 0 失配
 ```
@@ -285,12 +301,12 @@ make rtl-bp-replay                     # 0 失配
 
 ### 快速命令
 
-    make rtl-e2e                                  # 默认 seed 0x445343；PASS = 15552 bytes 逐字节一致
-    make rtl-e2e GOLDEN_SEED=0x1234               # 换 seed
-    make rtl-e2e GOLDEN_PATTERN=flatness          # 覆盖 flatness 决策
+    make rtl-top                                  # 默认 seed 0x445343；PASS = 15552 bytes 逐字节一致
+    make rtl-top GOLDEN_SEED=0x1234               # 换 seed
+    make rtl-top GOLDEN_PATTERN=flatness          # 覆盖 flatness 决策
     ./obj_dir/Vtb_dsc_e2e +STOP_FIRST_BOUNDARY    # 首个 group 边界失配停表（$fatal）
     grep -E "MISMATCH|VLC_INPUT|FLAT_SOURCE" <log> # 找首差异
-    make rtl-e2e-trace                            # 产出 VCD，gtkwave 打开
+    make rtl-top-trace                            # 产出 VCD，gtkwave 打开
 
 ### RTL 打点词典（tb_dsc_e2e.sv 的 $display）
 
@@ -354,7 +370,7 @@ make rtl-bp-replay                     # 0 失配
 替换是调试手段不是默认流程；纪律见 SKILL.md"升级路径"。**不要用 value model 替换正在调时序的
 模块**（会消掉要抓的 bug）——方法论是替换可疑模块**周围**的组件、保留可疑模块本身。
 
-早期把所有 `rtl-e2e-*-model` 替换 target（替换 BP/MPP/VLC/ICH/flatness 本身）与
+早期把所有 `rtl-top-*-model` 替换 target（替换 BP/MPP/VLC/ICH/flatness 本身）与
 `rtl-{vlc,bp}-{capture,replay}` 对比 harness 移除了：它们建模的是可疑模块本身，与上述方法论
 相悖。缺陷定位记录中引用的这些历史命令不再可运行，但结论仍有效。
 
@@ -372,13 +388,13 @@ function model 源文件仍在 `tests/verilator/model/*.cpp`，adapter 在
 
 | 工具 | 版本 | 能力 | 本项目调用 | 状态 |
 |---|---|---|---|---|
-| verilator | 5.032 | 编译/仿真/波形 | `make rtl-e2e`、`rtl-lint`、`rtl-smoke`、`rtl-e2e-trace` | ✅ 已接入 |
-| verilator_coverage | 5.032 | line/toggle 覆盖率分析、annotate、合并 | `make rtl-e2e-cov`（产物 `/tmp/dsc_cov/`） | ✅ 已接入 |
+| verilator | 5.032 | 编译/仿真/波形 | `make rtl-top`、`rtl-lint`、`rtl-smoke`、`rtl-top-trace` | ✅ 已接入 |
+| verilator_coverage | 5.032 | line/toggle 覆盖率分析、annotate、合并 | `make rtl-top-cov`（产物 `/tmp/dsc_cov/`） | ✅ 已接入 |
 | slang | 11.0.0 | SV elaborate/lint | `make rtl-slang` | ✅ 已接入 |
 | slang-server | 0.2.10 | `.sv/.svh/.v/.vh` LSP（经 systemverilog-lsp 插件） | Claude Code `LSP` 工具；索引配置 `.slang/server.json` | ✅ 已接入 |
 | clangd | 21.1.8 | C model LSP | `LSP` 工具；`compile_commands.json` 由 `make model-compile-commands`（bear）生成 | ✅ 已接入 |
 | bear | 3.1.6 | 拦截编译生成 compile_commands.json | `make model-compile-commands` | ✅ 已接入 |
-| gtkwave | 3.3.126 | VCD 波形查看 | `make rtl-e2e-trace` 后 `gtkwave tests/verilator/generated/rtl_e2e_trace.vcd` | ✅ 已接入 |
+| gtkwave | 3.3.126 | VCD 波形查看 | `make rtl-top-trace` 后 `gtkwave tests/verilator/generated/rtl_e2e_trace.vcd` | ✅ 已接入 |
 | gcc/g++ | 15.2 | C model + function model DPI | `make model` | ✅ 已接入 |
 | make | 4.4.1 | 构建 | 全部 target | ✅ 已接入 |
 | python3 | 3.14.4 | golden 向量生成/回归脚本 | `make golden`、`make model-regression` | ✅ 已接入 |
@@ -391,11 +407,11 @@ not-wired，需先验证再使用。工具状态是快照、会漂移，使用�
 bug（`l.location.range.start` undefined）；跨文件导航用 `findReferences`/`goToDefinition`，
 跨文件搜索用 grep 兜底。`LSP` 工具位置参数是 1-based 字符偏移，symbol 定位需先 Read 数准列。
 
-**VCD 波形**：`make rtl-e2e-trace`（`--trace --trace-depth 5`）产出
+**VCD 波形**：`make rtl-top-trace`（`--trace --trace-depth 5`）产出
 `tests/verilator/generated/rtl_e2e_trace.vcd`（已 gitignore）。层次：
 `tb_dsc_e2e.dsc_encoder.dsce_engine_inst.gen_slice[*].dsce_slice_inst`。
 
-**覆盖率**：`make rtl-e2e-cov` 全链路（golden → coverage 编译 → 仿真 → `verilator_coverage
+**覆盖率**：`make rtl-top-cov` 全链路（golden → coverage 编译 → 仿真 → `verilator_coverage
 --annotate`），产物全在 `/tmp/dsc_cov/` 不污染工作区。看盲区：
 `grep '%000000' /tmp/dsc_cov/annotate/dsce_*.sv`；`COV_DIR` 可覆盖以跑多配置，再用
 `verilator_coverage a.dat b.dat --write-merged merged.dat` 合并。

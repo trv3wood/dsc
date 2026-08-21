@@ -1,0 +1,21 @@
+[tasks]
+prove
+cover
+
+[options]
+prove: mode prove
+prove: depth 20
+cover: mode cover
+cover: depth 10
+
+[engines]
+prove: smtbmc boolector
+cover: smtbmc boolector
+
+[script]
+prove: read -formal -sv -D SAFE_FLUSH flatness_transaction_fifo_formal.sv
+cover: read -formal -sv flatness_transaction_fifo_formal.sv
+prep -top flatness_transaction_fifo_formal
+
+[files]
+tests/formal/flatness_transaction_fifo_formal.sv

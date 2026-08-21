@@ -156,7 +156,7 @@
 ## 8. A/B 用 function-model 包装（不参与综合）
 
 新增端口等价替换件，DPI 对接 `tests/verilator/model/*.cpp`，支撑
-`rtl-e2e-*-model` 系列做模块级隔离定位：
+`rtl-top-*-model` 系列做模块级隔离定位：
 
 - `dsce_bpvector_function_model.sv`（BP search/predict 黑盒）
 - `dsce_ich_function_model.sv`（ICH history/candidate/decision）
@@ -177,8 +177,8 @@
 
 ## 验证状态
 
-- `make rtl-e2e`（seed `0x445343`）：15552 字节逐字节一致。
-- `make rtl-e2e GOLDEN_SEED=0x1234`：15552 字节逐字节一致；
+- `make rtl-top`（seed `0x445343`）：15552 字节逐字节一致。
+- `make rtl-top GOLDEN_SEED=0x1234`：15552 字节逐字节一致；
   仅 ssp0 的 VLC fragment 粒度差异（`010000`+`030001`→`040001` 等，
   等价位流，不影响打包字节）。
 - `rtl-flatness-replay`：3456 groups 逐事务 0 失配。
@@ -190,7 +190,7 @@
 
 多分辨率/多 slice RTL 对拍（`tb_dsc_e2e_multi.sv` + `generate_golden.py` 参数化
 `--slice-width/--slice-height`）暴露两个 RTL 层面缺陷，单 slice 基线程零回归
-（`make rtl-e2e` 与多 slice tb 均 PASS）：
+（`make rtl-top` 与多 slice tb 均 PASS）：
 
 1. **`dsce_format_buffer` 不按 chunk 打 last → slice_mux 从不切换 slice**。
    原实现一次输出整个 slice 的 muxword 流，`axi_last_out` 在 chunk 边界恒低，
@@ -217,7 +217,7 @@
 
 主要问题按严重度如下。
 
-- 高：多 slice 仍未修复。`dsce_partition` 的 `i_slice_select` 在 slice 结束后持续轮换，行首只清 `i_slice_count`，没有恢复 slice 列到 processor 的固定映射，见 [dsce_partition.sv](/home/zys/Project/dsc/verilog_dsc/dsce_partition.sv:106)。实测 `make rtl-e2e-multi MULTI_CASE=ms2` 在 byte 7 首差，`top_mis=13337`，输出 13440/15552 bytes。最新提交只让 `slice_mux` 轮换起来，并未修正流的归属和顺序。
+- 高：多 slice 仍未修复。`dsce_partition` 的 `i_slice_select` 在 slice 结束后持续轮换，行首只清 `i_slice_count`，没有恢复 slice 列到 processor 的固定映射，见 [dsce_partition.sv](/home/zys/Project/dsc/verilog_dsc/dsce_partition.sv:106)。实测 `make rtl-top-multi MULTI_CASE=ms2` 在 byte 7 首差，`top_mis=13337`，输出 13440/15552 bytes。最新提交只让 `slice_mux` 轮换起来，并未修正流的归属和顺序。
 
 - 高：新 BP 实现只对当前 8bpc RGB 用例成立。边缘阈值为 `32 << (bpc-8)`，但差值先被 `bp_mad()` 饱和到 6 bit，再与 `edge_threshold[5:0]` 比较，见 [dsce_bpvector.sv](/home/zys/Project/dsc/verilog_dsc/dsce_bpvector.sv:163)。当 bpc=9/10/12 时阈值低 6 位为 0，几乎所有非零差值都会被判为 edge。此外，非 RGB 模式下 chroma midpoint 仍固定为 `1 << bpc`，而不是对应分量位深的中点，见同文件第 110 行。现有生成器固定 8bpc RGB，因此完全覆盖不到这两个问题。
 
@@ -231,12 +231,12 @@
 
 本次复跑结果：
 
-- `make rtl-e2e`：PASS，15552 bytes 零失配。
-- `make rtl-e2e GOLDEN_SEED=0x1234`：PASS，15552 bytes 零失配。
+- `make rtl-top`：PASS，15552 bytes 零失配。
+- `make rtl-top GOLDEN_SEED=0x1234`：PASS，15552 bytes 零失配。
 - `make rtl-flatness-replay`：PASS，3456 groups 零失配。
 - `make rtl-bp-replay`：PASS，3456 groups 零失配，但使用已有 capture。
 - `make rtl-bp-capture`：FAIL，层级引用导致 elaboration error。
-- `make rtl-e2e-multi MULTI_CASE=ms2`：FAIL，13337 个顶层字节失配。
+- `make rtl-top-multi MULTI_CASE=ms2`：FAIL，13337 个顶层字节失配。
 
 因此，更准确的结论是：flatness、MPP/ICH/VLC 时序、QP 对齐和 BP 的核心方向已经让两个固定单-slice用例真正通过；但 BP 多位深/非 RGB、format buffer 长度、backpressure 和多 slice 仍未修复，当前不应把 [rtl_fix_log.md](/home/zys/Project/dsc/tests/verilator/rtl_fix_log.md:1) 描述为“RTL 缺陷已整体修复”。
 
@@ -276,7 +276,7 @@
 - `dsce_stream_fifo`:muxword FIFO write-into-full 断言。
 - `dsce_bpvector`:修复 `int candidate` 自动变量被静态初始化引用的 slang 错误
   (语义不变,纯 lint 修复,`make rtl-slang` 2 errors → 0)。
-- 全部经 `rtl-e2e`(默认 + 0x1234)、`rtl-flatness-replay`、`rtl-smoke`、`rtl-slang`、
+- 全部经 `rtl-top`(默认 + 0x1234)、`rtl-flatness-replay`、`rtl-smoke`、`rtl-slang`、
   `rtl-lint` 复跑 PASS / 0 errors。
 
 ### 多 slice 专项(2026-08-18 二次收敛:结构已通,剩内容/大 slice 容量)
@@ -294,7 +294,7 @@
    (tready_out=1)时直接进 kSST_HBLANK,仅未接受才进 LAST 保持。单 slice 因
    axi_last_out 恒 0 从不进 LAST,不受影响。
 
-单 slice 回归保持绿(rtl-e2e / flatness-replay / smoke / slang / lint)。
+单 slice 回归保持绿(rtl-top / flatness-replay / smoke / slang / lint)。
 
 **剩余两处(均为预存、与结构修复无关,已分别定位):**
 

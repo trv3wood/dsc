@@ -68,11 +68,22 @@ def parse_args() -> argparse.Namespace:
         default="random",
         help="输入图案（flatness 混合噪声与平坦区域，用于覆盖 flatness 决策）",
     )
+    parser.add_argument(
+        "--input-ppm",
+        type=Path,
+        help="使用已有 8bpc P6 PPM，而不是生成 pattern",
+    )
     args = parser.parse_args()
     if args.seed < 0:
         parser.error("--seed 必须是非负整数")
+    if args.width <= 0 or args.height <= 0:
+        parser.error("--width 和 --height 必须大于 0")
     if args.width % 4:
         parser.error("--width 必须是 4 的倍数（每拍 4 像素）")
+    if args.slice_height <= 0:
+        parser.error("--slice-height 必须大于 0")
+    if args.slice_width < 0:
+        parser.error("--slice-width 不能为负数")
     if args.slice_width and args.width % args.slice_width:
         parser.error("--width 必须是 --slice-width 的倍数")
     if args.height % args.slice_height:
@@ -104,6 +115,37 @@ def write_ppm(path: Path, seed: int, pattern: str) -> list[tuple[int, int, int]]
         output.write(f"P6\n{WIDTH} {HEIGHT}\n255\n".encode("ascii"))
         output.write(bytes(component for sample in pixels for component in sample))
     return pixels
+
+
+def read_ppm(path: Path, width: int, height: int) -> tuple[bytes, list[tuple[int, int, int]]]:
+    """读取无损转换后的 8bpc P6 PPM，并返回原文件与像素。"""
+    data = path.read_bytes()
+    tokens: list[bytes] = []
+    index = 0
+    while len(tokens) < 4:
+        while index < len(data) and chr(data[index]).isspace():
+            index += 1
+        if index < len(data) and data[index] == ord("#"):
+            index = data.find(b"\n", index) + 1
+            if index == 0:
+                raise RuntimeError("PPM 注释未结束")
+            continue
+        start = index
+        while index < len(data) and not chr(data[index]).isspace():
+            index += 1
+        tokens.append(data[start:index])
+    if tokens != [b"P6", str(width).encode(), str(height).encode(), b"255"]:
+        raise RuntimeError(f"仅支持 {width}x{height}、8bpc P6 PPM：{path}")
+    if index >= len(data) or not chr(data[index]).isspace():
+        raise RuntimeError(f"PPM 头部缺少像素分隔符：{path}")
+    index += 1
+    if data[index - 1:index + 1] == b"\r\n":
+        index += 1
+    raster = data[index:]
+    if len(raster) != width * height * 3:
+        raise RuntimeError(f"PPM 像素长度异常：{path}")
+    pixels = [tuple(raster[offset:offset + 3]) for offset in range(0, len(raster), 3)]
+    return data, pixels
 
 
 def write_pixels(path: Path, pixels: list[tuple[int, int, int]]) -> None:
@@ -329,7 +371,13 @@ def main() -> None:
         generated = generated / CASE_DIR
     generated.mkdir(parents=True, exist_ok=True)
     source = generated / f"rgb_{WIDTH}x{HEIGHT}.ppm"
-    pixels = write_ppm(source, args.seed, args.pattern)
+    pattern_name = args.pattern
+    if args.input_ppm:
+        source_data, pixels = read_ppm(args.input_ppm, WIDTH, HEIGHT)
+        source.write_bytes(source_data)
+        pattern_name = f"official:{args.input_ppm.stem}"
+    else:
+        pixels = write_ppm(source, args.seed, args.pattern)
     write_pixels(generated / "pixels.hex", pixels)
 
     config = generated / "golden.cfg"
@@ -379,7 +427,7 @@ def main() -> None:
     )
     # flatness/group replay 向量以整幅一 slice 为边界假设；多 slice 划分时跳过
     #（该向量供独立 replay tb 使用，不参与端到端 payload 对拍）。
-    if SLICE_WIDTH in (0, WIDTH) and SLICE_HEIGHT == HEIGHT:
+    if WIDTH % 3 == 0 and SLICE_WIDTH in (0, WIDTH) and SLICE_HEIGHT == HEIGHT:
         write_flatness_replay(generated, pixels, group_trace)
         write_group_boundary_expected(generated, group_trace)
     muxword_counts = split_mux_trace(mux_trace, generated)
@@ -398,8 +446,9 @@ def main() -> None:
         f"slice_height={SLICE_HEIGHT}\n"
         f"slices_per_line={WIDTH // SLICE_WIDTH if SLICE_WIDTH else 1}\n"
         f"beats={len(pixels) // 4}\n"
-        f"payload_bytes={len(payload)}\nseed=0x{args.seed:x}\npattern={args.pattern}\n"
+        f"payload_bytes={len(payload)}\nseed=0x{args.seed:x}\npattern={pattern_name}\n"
         f"block_pred={args.block_pred}\n"
+        "bpc=8\nbpp=12\nformat=rgb\n"
         f"ssp_muxwords={','.join(str(count) for count in muxword_counts)}\n"
         f"ssp_vlc_fragments={','.join(str(count) for count in vlc_counts)}\n",
         encoding="ascii",
@@ -407,7 +456,7 @@ def main() -> None:
     print(
         f"golden vector: {WIDTH}x{HEIGHT} slice={SLICE_WIDTH or WIDTH}x{SLICE_HEIGHT} "
         f"PPS={len(pps)} bytes, payload={len(payload)} bytes, "
-        f"seed=0x{args.seed:x}, pattern={args.pattern}, block_pred={args.block_pred}"
+        f"seed=0x{args.seed:x}, pattern={pattern_name}, block_pred={args.block_pred}"
     )
 
 

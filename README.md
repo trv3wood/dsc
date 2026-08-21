@@ -25,8 +25,8 @@ make model-run           # 默认 1920×1080（testdata + test.cfg）
 make model-4k            # 3840×2160 4K（testdata4k + test_4k.cfg，含解码回读）
 make model-regression    # 多分辨率回归（1080p~8K × slice 划分，见 tools/run_dsc_regression.py）
 make rtl-lint            # Verilator lint/elaboration
-make rtl-e2e             # 端到端 payload 逐字节对拍（默认 seed 0x445343）
-make rtl-e2e GOLDEN_SEED=0x1234
+make rtl-top             # 端到端 payload 逐字节对拍（默认 seed 0x445343）
+make rtl-top GOLDEN_SEED=0x1234
 make rtl-flatness-replay # flatness 边界 replay
 make rtl-bp-replay       # BP vector replay
 ```

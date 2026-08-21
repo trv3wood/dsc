@@ -156,6 +156,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--bpc", type=int, choices=(8, 10, 12, 14, 16), default=8,
                         help="每分量位深（PPM maxval=(1<<bpc)-1，默认 8）")
     parser.add_argument("--seed", type=int, default=20260815, help="噪声随机种子")
+    parser.add_argument(
+        "--patterns",
+        default="all",
+        help="逗号分隔图案名（不含 .ppm）或 all",
+    )
     args = parser.parse_args()
     if args.width <= 0 or args.height <= 0:
         parser.error("宽度和高度必须大于 0")
@@ -163,7 +168,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def generate(output_dir: Path, list_path: Path, width: int, height: int,
-             bpc: int, seed: int) -> list[Path]:
+             bpc: int, seed: int, pattern_names: set[str] | None = None) -> list[Path]:
     """生成全部测试图并写出输入列表，返回生成的 PPM 路径列表。"""
     output_dir = output_dir.expanduser().resolve()
     list_path = list_path.expanduser().resolve()
@@ -184,13 +189,22 @@ def generate(output_dir: Path, list_path: Path, width: int, height: int,
     }
     generated: list[Path] = []
     for filename, pattern in patterns.items():
+        if pattern_names is not None and Path(filename).stem not in pattern_names:
+            continue
         path = output_dir / filename
         write_pattern(path, width, height, maxval, pattern)
         generated.append(path)
 
-    noise_path = output_dir / "noise.ppm"
-    write_noise(noise_path, width, height, seed, bpc)
-    generated.append(noise_path)
+    if pattern_names is None or "noise" in pattern_names:
+        noise_path = output_dir / "noise.ppm"
+        write_noise(noise_path, width, height, seed, bpc)
+        generated.append(noise_path)
+
+    available = {Path(name).stem for name in patterns} | {"noise"}
+    if pattern_names is not None and pattern_names - available:
+        raise ValueError(f"未知图案：{','.join(sorted(pattern_names - available))}")
+    if not generated:
+        raise ValueError("至少选择一个测试图案")
 
     relative_paths = (os.path.relpath(path, list_path.parent) for path in generated)
     list_path.write_text("".join(f"{path}\n" for path in relative_paths), encoding="utf-8")
@@ -201,7 +215,9 @@ def generate(output_dir: Path, list_path: Path, width: int, height: int,
 
 def main() -> None:
     args = parse_args()
-    generate(args.output, args.list_output, args.width, args.height, args.bpc, args.seed)
+    selected = None if args.patterns == "all" else set(args.patterns.split(","))
+    generate(args.output, args.list_output, args.width, args.height, args.bpc, args.seed,
+             selected)
 
 
 if __name__ == "__main__":

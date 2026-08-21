@@ -91,7 +91,7 @@ module tb_dsc_e2e;
     int           predict_input_group = 0;
 
 `ifdef DSC_VCD_DUMP
-    // make rtl-e2e-trace 传入；普通 make rtl-e2e 不启用，避免无谓的波形写入。
+    // make rtl-top-trace 传入；普通 make rtl-top 不启用，避免无谓的波形写入。
     initial begin
         $dumpfile("tests/verilator/generated/rtl_e2e_trace.vcd");
         $dumpvars(0, tb_dsc_e2e);

@@ -50,6 +50,11 @@ module tb_dsc_e2e_multi;
     int           slices_per_line;
     int           payload_bytes;
     int           beats;
+    int unsigned  flow_seed = 32'h9e37_79b9;
+    int           input_gap_pct = 0;
+    int           output_stall_pct = 0;
+    logic [31:0]  input_prng;
+    logic [31:0]  output_prng;
 
     // 向量数组按上限静态分配（覆盖至 4K/DCI 4K；5K/8K 不做 RTL 仿真）。
     localparam int kMAX_BEATS   = 2_000_000;
@@ -67,6 +72,27 @@ module tb_dsc_e2e_multi;
     always begin apb_clk <= ~apb_clk; #10; end
     always begin dsc_clk <= ~dsc_clk; #5;  end   // dsc 域 2x
     always begin axi_clk <= ~axi_clk; #10; end
+
+    function automatic logic [31:0] prng_next(input logic [31:0] state);
+        logic feedback;
+        begin
+            feedback = state[31] ^ state[21] ^ state[1] ^ state[0];
+            prng_next = {state[30:0], feedback};
+            if (prng_next == 0)
+                prng_next = 32'h1;
+        end
+    endfunction
+
+    // 输出背压使用独立 PRNG；同一 flow_seed 可稳定复现。
+    always @(negedge axi_clk) begin
+        if (!async_reset_n) begin
+            output_prng <= flow_seed ^ 32'ha5a5_5a5a;
+            axi_tready_out <= 1'b1;
+        end else begin
+            output_prng <= prng_next(output_prng);
+            axi_tready_out <= (output_prng % 100) >= output_stall_pct;
+        end
+    end
 
     dsc_encoder dut (
         .apb_clk(apb_clk), .apb_select(apb_select), .apb_enable(apb_enable),
@@ -433,6 +459,13 @@ module tb_dsc_e2e_multi;
     initial begin
         string case_name;
         int    fd;
+        void'($value$plusargs("flow_seed=%d", flow_seed));
+        void'($value$plusargs("input_gap_pct=%d", input_gap_pct));
+        void'($value$plusargs("output_stall_pct=%d", output_stall_pct));
+        if (input_gap_pct < 0 || input_gap_pct > 90 ||
+            output_stall_pct < 0 || output_stall_pct > 90)
+            $fatal(1, "流控百分比必须位于 0..90");
+        input_prng = flow_seed ^ 32'h3c6e_f372;
         base_path = "tests/verilator/generated";
         if ($value$plusargs("case=%s", case_name) && case_name.len() > 0)
             base_path = {base_path, "/", case_name};
@@ -454,10 +487,10 @@ module tb_dsc_e2e_multi;
         $readmemh({base_path, "/pixels.hex"}, input_beats);
         $readmemh({base_path, "/expected_payload.hex"}, expected_payload);
 
-        $display("CASE=%0s %0dx%0d slice=%0dx%0d spl=%0d beats=%0d payload=%0dB",
+        $display("CASE=%0s %0dx%0d slice=%0dx%0d spl=%0d beats=%0d payload=%0dB flow_seed=%0d gap=%0d%% stall=%0d%%",
                  case_name.len() ? case_name : "<default>",
                  width, height, slice_width, slice_height, slices_per_line,
-                 beats, payload_bytes);
+                 beats, payload_bytes, flow_seed, input_gap_pct, output_stall_pct);
     end
 
     initial begin : TestSequence
@@ -528,6 +561,12 @@ module tb_dsc_e2e_multi;
             axi_tline_in = 1'b0;
 
             for (int column_beat = 0; column_beat < width/4; column_beat++) begin
+                input_prng = prng_next(input_prng);
+                while ((input_prng % 100) < input_gap_pct) begin
+                    axi_tvalid_in = 1'b0;
+                    @(negedge axi_clk);
+                    input_prng = prng_next(input_prng);
+                end
                 axi_tdata_in = input_beats[beat_index];
                 axi_tvalid_in = 1'b1;
                 do @(posedge axi_clk); while (!axi_tready_in);
