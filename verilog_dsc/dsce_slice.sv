@@ -278,6 +278,14 @@ module dsce_slice
         end
     end
 
+    // formatter/FIFO 把 start 当作独立复位拍；若与首组 valid 同拍，写指针
+    // 会被清零并丢失该事务。
+    always_ff @(posedge dsc_clk) begin : FormatterStartCheck
+        if (dsc_reset_n)
+            assert (!(i_start_of_slice_pd && i_valid_pd))
+                else $error("Formatter start overlaps first prediction transaction");
+    end
+
 
     // ------------------------------------------------------------------------------------------------------------
     //                                             components
