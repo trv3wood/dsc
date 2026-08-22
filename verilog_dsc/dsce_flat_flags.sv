@@ -170,13 +170,15 @@ module dsce_flat_flags
         i_flat_threshold_c = dsce_max_2(i_very_flat_thresh, dsce_quant_divisor(i_flat_qlevel_c));
 
         // group 3 输出时，队列中的 1/2/3 和当前输入正好覆盖下一个 supergroup。
+        // 一旦窗口中遇到行末，后面的 queue/stage 槽位属于 flush padding 或旧数据，
+        // 不能继续参与下一 supergroup 的 flatness 搜索。
         i_candidate_type[0] = i_super_group_last[1] ? 2'd0 :
                               dsce_flatness_type(i_sg_1_check_diff[1], i_sg_1_check_diff[2]);
-        i_candidate_type[1] = i_super_group_last[2] ? 2'd0 :
+        i_candidate_type[1] = (|i_super_group_last[2:1]) ? 2'd0 :
                               dsce_flatness_type(i_sg_2_check_diff[1], i_sg_2_check_diff[2]);
-        i_candidate_type[2] = i_super_group_last[3] ? 2'd0 :
+        i_candidate_type[2] = (|i_super_group_last[3:1]) ? 2'd0 :
                               dsce_flatness_type(i_sg_3_check_diff[1], i_sg_3_check_diff[2]);
-        i_candidate_type[3] = i_stage_last[3] ? 2'd0 :
+        i_candidate_type[3] = ((|i_super_group_last[3:1]) || i_stage_last[3]) ? 2'd0 :
                               dsce_flatness_type(i_stage_check_diff[3][1], i_stage_check_diff[3][2]);
 
         // quantization divisors
@@ -289,7 +291,8 @@ module dsce_flat_flags
                     if (i_dsc_version_2_active && i_flush_count == 3'd2)
                         dsc_vlc_flat_flags_out.group_flatness_type <= kDSC_VERY_FLAT;
 
-                    if (i_output_supergroup_index == 2'd0 && i_current_first_flat_valid) begin
+                    if (i_output_supergroup_index == 2'd0 && i_current_first_flat_valid &&
+                        i_flush_count != 3'd2) begin
                         dsc_vlc_flat_flags_out.send_flatness <= 1'b1;
                         dsc_vlc_flat_flags_out.first_flat <= i_current_first_flat;
                         dsc_vlc_flat_flags_out.flatness_type <= i_current_flatness_type;

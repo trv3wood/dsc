@@ -10,6 +10,9 @@ module dsc_ich_window_monitor;
     int trace_tx_begin = 170;
     int trace_tx_end = 205;
     int mmap_watch_tx = 189;
+    int wave_tx_begin = 0;
+    int wave_tx_end = 0;
+    bit wave_enabled = 0;
     string trace_path = "/tmp/dsc_ich_window_trace.log";
 
     initial begin
@@ -17,6 +20,8 @@ module dsc_ich_window_monitor;
         void'($value$plusargs("trace_tx_end=%d", trace_tx_end));
         void'($value$plusargs("mmap_watch_tx=%d", mmap_watch_tx));
         void'($value$plusargs("transaction_trace=%s", trace_path));
+        wave_enabled = $value$plusargs("wave_tx_begin=%d", wave_tx_begin);
+        void'($value$plusargs("wave_tx_end=%d", wave_tx_end));
         if (trace_tx_end < trace_tx_begin)
             $fatal(1, "trace 事务窗口非法: %0d..%0d", trace_tx_begin, trace_tx_end);
         trace_file = $fopen(trace_path, "w");
@@ -27,9 +32,19 @@ module dsc_ich_window_monitor;
             trace_tx_begin, trace_tx_end, mmap_watch_tx);
     end
 
+    initial begin
+        #1;
+        if (wave_enabled)
+            $dumpoff;
+    end
+
     always @(posedge tb_dsc_e2e_multi.dsc_clk) begin : CaptureWindow
         if (tb_dsc_e2e_multi.async_reset_n) begin
             if (tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_valid_fd) begin
+                if (wave_enabled && source_tx == wave_tx_begin)
+                    $dumpon;
+                if (wave_enabled && source_tx == wave_tx_end + 2)
+                    $dumpoff;
                 if (source_tx >= trace_tx_begin && source_tx <= trace_tx_end) begin
                     $fwrite(trace_file,
                         "SRC tx=%0d qp=%0d px=%012x/%012x/%012x entv=%08x hitcur=%03b combidx=%0d/%0d/%0d\n",
@@ -97,7 +112,7 @@ module dsc_ich_window_monitor;
             if (tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_valid_pd) begin
                 if (predict_tx >= trace_tx_begin && predict_tx <= trace_tx_end) begin
                     $fwrite(trace_file,
-                        "RATE tx=%0d coded=%0d rc=%0d feedback=%0d current=%0d current_st=%0d st=%0d out=%0d next=%0d validpipe=%03b fullness=%0d target=%0d minmax=%0d/%0d flat=%0b\n",
+                        "RATE tx=%0d coded=%0d rc=%0d feedback=%0d current=%0d current_st=%0d st=%0d out=%0d next=%0d validpipe=%03b fullness=%0d offset=%0d bpg=%0d frac=%0d target=%0d ixd=%0b/%0b/%0d nextixd=%0d chunk=%0d endchunk=%0b adj=%0d minmax=%0d/%0d flat=%0b\n",
                         predict_tx,
                         tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_coded_group_size,
                         tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_rc_size_group,
@@ -109,10 +124,47 @@ module dsc_ich_window_monitor;
                         tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_rc_primary_qp_next,
                         tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_valid_pipe,
                         tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_buffer_fullness_reg,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_fullness_offset,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_bits_per_group,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_bits_per_group_frac,
                         tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_rc_tgt_bits_group,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_ixd_active,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_ixd_end,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_ixd_pixel_count,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_next_ixd_pixel_count,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_chunk_pixel_count,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_end_of_chunk,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_adjustment_bits,
                         tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_min_qp,
                         tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_max_qp,
                         tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_vlc_flat_flags_aligned.group_flatness_type);
+                    $fwrite(trace_file,
+                        "VLC_RATE tx=%0d units=%0d/%0d/%0d rc=%0d/%0d/%0d previch=%0b/%0b/%0b pred=%0d/%0d/%0d adjpred=%0d/%0d/%0d prefix=%0d/%0d/%0d residual=%0d/%0d/%0d flat=%0d/%0d/%0d\n",
+                        predict_tx,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.i_coded_unit_size_vlc[0],
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.i_coded_unit_size_vlc[1],
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.i_coded_unit_size_vlc[2],
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.i_rcsg_vlc[0],
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.i_rcsg_vlc[1],
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.i_rcsg_vlc[2],
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.gen_vlc[0].dsce_vlc_inst.i_prev_ich,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.gen_vlc[1].dsce_vlc_inst.i_prev_ich,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.gen_vlc[2].dsce_vlc_inst.i_prev_ich,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.gen_vlc[0].dsce_vlc_inst.i_predicted_size,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.gen_vlc[1].dsce_vlc_inst.i_predicted_size,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.gen_vlc[2].dsce_vlc_inst.i_predicted_size,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.gen_vlc[0].dsce_vlc_inst.i_adj_predicted_size,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.gen_vlc[1].dsce_vlc_inst.i_adj_predicted_size,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.gen_vlc[2].dsce_vlc_inst.i_adj_predicted_size,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.gen_vlc[0].dsce_vlc_inst.i_prefix_size,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.gen_vlc[1].dsce_vlc_inst.i_prefix_size,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.gen_vlc[2].dsce_vlc_inst.i_prefix_size,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.gen_vlc[0].dsce_vlc_inst.i_coded_residual_size,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.gen_vlc[1].dsce_vlc_inst.i_coded_residual_size,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.gen_vlc[2].dsce_vlc_inst.i_coded_residual_size,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.gen_vlc[0].dsce_vlc_inst.i_flatness_size,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.gen_vlc[1].dsce_vlc_inst.i_flatness_size,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_format_inst.gen_vlc[2].dsce_vlc_inst.i_flatness_size);
                 end
                 if (predict_tx <= trace_tx_end) begin
                     $fwrite(trace_file,

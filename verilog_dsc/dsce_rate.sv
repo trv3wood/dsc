@@ -432,6 +432,11 @@ module dsce_rate
                         i_bits_per_group_frac <= {1'b0, i_bpgf_inc[3:0]};
                         i_bits_per_group <= i_tgt_bits_per_group[11:4] + i_bpgf_inc[4];
                     end // ixd not active
+                    2'b01:  begin
+                        // terminal partial 已由上一事务扣除；为下一事务预装正常 BPG。
+                        i_bits_per_group_frac <= {1'b0, i_bpgf_inc[3:0]};
+                        i_bits_per_group <= i_tgt_bits_per_group[11:4] + i_bpgf_inc[4];
+                    end
                     2'b11:  begin
                         i_bits_per_group <= i_ixd_bits_per_group_gte[11:4];
                         i_bits_per_group_frac <= {1'b0, i_ixd_bits_per_group_gte[3:0]};
