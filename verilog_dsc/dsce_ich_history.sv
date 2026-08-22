@@ -139,30 +139,32 @@ module dsce_ich_history
     end : ICHModeUpdateLogic
 
     // 官方模型对 ICH 组的三个重建像素按光栅顺序逐个执行 move-to-front。
-    // 仅 0..24 属于可更新历史；25..31 是上一行的动态候选，不参与去重。
+    // 第一行可更新全部 32 项；后续行的 25..31 是上一行动态候选。
     always_comb begin : ICHMoveToFront
         i_ich_mode_entry_next = i_ich_entry_buffer;
         i_ich_mode_valid_next = i_ich_entry_valid;
 
         for (int px = 0; px < 3; px++) begin
             int move_loc;
+            int move_limit;
             logic found_loc;
 
-            move_loc = 24;
+            move_limit = (i_first_line == 1'b1) ? 31 : 24;
+            move_loc = move_limit;
             found_loc = 1'b0;
-            for (int hx = 0; hx < 25; hx++) begin
-                if (!found_loc && !i_ich_mode_valid_next[hx]) begin
+            for (int hx = 0; hx < 32; hx++) begin
+                if (hx <= move_limit && !found_loc && !i_ich_mode_valid_next[hx]) begin
                     move_loc = hx;
                     found_loc = 1'b1;
-                end else if (!found_loc && i_ich_mode_valid_next[hx] &&
+                end else if (hx <= move_limit && !found_loc && i_ich_mode_valid_next[hx] &&
                              i_ich_mode_entry_next[hx] == dsc_recon_group_in[px]) begin
                     move_loc = hx;
                     found_loc = 1'b1;
                 end
             end
 
-            for (int hx = 24; hx > 0; hx--) begin
-                if (hx <= move_loc) begin
+            for (int hx = 31; hx > 0; hx--) begin
+                if (hx <= move_limit && hx <= move_loc) begin
                     i_ich_mode_entry_next[hx] = i_ich_mode_entry_next[hx-1];
                     i_ich_mode_valid_next[hx] = i_ich_mode_valid_next[hx-1];
                 end
