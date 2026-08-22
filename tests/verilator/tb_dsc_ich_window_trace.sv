@@ -1,23 +1,36 @@
 `timescale 1ns/1ps
 
 // 仅供显式调试构建使用；不进入 rtl.f，也不修改标准 e2e testbench。
-// monitor 绑定到 multi TB，冻结 slice0 在首个 ICH 分歧附近的事务窗口。
+// monitor 绑定到 multi TB，按 accepted transaction 冻结 slice0 的调试窗口。
 module dsc_ich_window_monitor;
     integer trace_file;
     int source_tx = 0;
     int predict_tx = 0;
     int mmap_watch = 0;
+    int trace_tx_begin = 170;
+    int trace_tx_end = 205;
+    int mmap_watch_tx = 189;
+    string trace_path = "/tmp/dsc_ich_window_trace.log";
 
     initial begin
-        trace_file = $fopen("/tmp/dsc_ich_window_trace.log", "w");
+        void'($value$plusargs("trace_tx_begin=%d", trace_tx_begin));
+        void'($value$plusargs("trace_tx_end=%d", trace_tx_end));
+        void'($value$plusargs("mmap_watch_tx=%d", mmap_watch_tx));
+        void'($value$plusargs("transaction_trace=%s", trace_path));
+        if (trace_tx_end < trace_tx_begin)
+            $fatal(1, "trace 事务窗口非法: %0d..%0d", trace_tx_begin, trace_tx_end);
+        trace_file = $fopen(trace_path, "w");
         if (trace_file == 0)
-            $fatal(1, "无法创建 ICH 窗口 trace");
+            $fatal(1, "无法创建事务 trace: %s", trace_path);
+        $fwrite(trace_file,
+            "META schema=dsc-transaction-v1 slice=0 tx_begin=%0d tx_end=%0d mmap_watch=%0d\n",
+            trace_tx_begin, trace_tx_end, mmap_watch_tx);
     end
 
     always @(posedge tb_dsc_e2e_multi.dsc_clk) begin : CaptureWindow
         if (tb_dsc_e2e_multi.async_reset_n) begin
             if (tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_valid_fd) begin
-                if (source_tx >= 170 && source_tx <= 205) begin
+                if (source_tx >= trace_tx_begin && source_tx <= trace_tx_end) begin
                     $fwrite(trace_file,
                         "SRC tx=%0d qp=%0d px=%012x/%012x/%012x entv=%08x hitcur=%03b combidx=%0d/%0d/%0d\n",
                         source_tx,
@@ -41,12 +54,12 @@ module dsc_ich_window_monitor;
                         tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_prev_line_mmap[5],
                         tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_right_pixel_dec);
                 end
-                if (source_tx == 189)
+                if (source_tx == mmap_watch_tx)
                     mmap_watch = 1;
                 source_tx++;
             end
 
-            // 只冻结 tx189 进入后的四拍，检查 MMAP 内部是否被后续输入覆盖。
+            // 只冻结目标事务进入后的六拍，检查 MMAP 内部是否被后续输入覆盖。
             if (mmap_watch > 0 && mmap_watch <= 6) begin
                 $fwrite(trace_file,
                     "MMAP_CO_CYCLE n=%0d state=%0d first=%0b/%0b in=%0d/%0d/%0d right=%0d blend=%0d/%0d/%0d/%0d calc0=%0d/%0d/%0d pipe=%0d/%0d qres=%0d/%0d calc1=%0d/%0d/%0d out=%0d/%0d/%0d res=%0d/%0d/%0d\n",
@@ -82,7 +95,26 @@ module dsc_ich_window_monitor;
             end
 
             if (tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_valid_pd) begin
-                if (predict_tx <= 200) begin
+                if (predict_tx >= trace_tx_begin && predict_tx <= trace_tx_end) begin
+                    $fwrite(trace_file,
+                        "RATE tx=%0d coded=%0d rc=%0d feedback=%0d current=%0d current_st=%0d st=%0d out=%0d next=%0d validpipe=%03b fullness=%0d target=%0d minmax=%0d/%0d flat=%0b\n",
+                        predict_tx,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_coded_group_size,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_rc_size_group,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_rate_feedback_qp,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_current_qp,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_current_qp_st,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_st_qp,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_rc_primary_qp,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_rc_primary_qp_next,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_valid_pipe,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_buffer_fullness_reg,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_rc_tgt_bits_group,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_min_qp,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.dsce_rate_inst.i_max_qp,
+                        tb_dsc_e2e_multi.dut.dsce_engine_inst.gen_slice[0].dsce_slice_inst.i_vlc_flat_flags_aligned.group_flatness_type);
+                end
+                if (predict_tx <= trace_tx_end) begin
                     $fwrite(trace_file,
                         "UPD tx=%0d sel=%0b last=%0b recon=%012x/%012x/%012x valid=%08x table=",
                         predict_tx,
@@ -100,7 +132,7 @@ module dsc_ich_window_monitor;
                     end
                     $fwrite(trace_file, "\n");
                 end
-                if (predict_tx >= 170 && predict_tx <= 205) begin
+                if (predict_tx >= trace_tx_begin && predict_tx <= trace_tx_end) begin
                     $fwrite(trace_file,
                         "PRED tx=%0d qp=%0d ql=%0d/%0d mpp=%03b usebp=%0b raw1=%013x/%013x/%013x hit=%03b idx=%0d/%0d/%0d sel=%0b cost=%0d/%0d log=%0d/%0d prev=%012x/%012x/%012x\n",
                         predict_tx,
