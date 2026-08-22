@@ -129,16 +129,12 @@ module tb_dsc_flatness_replay;
         dsc_source_valid_in = 1'b0;
         dsc_source_last_in = 1'b0;
 
-        repeat (100) begin
-            @(negedge dsc_clk);
-            if (output_index == pTOTAL_GROUPS) begin
-                if (errors == 0 && group_errors == 0)
-                    $display("PASS: flatness replay 逐事务比对通过，共 %0d groups", output_index);
-                else
-                    $fatal(1, "flatness replay 失败，flags=%0d groups=%0d", errors, group_errors);
-                $finish;
-            end
-        end
-        $fatal(1, "flatness replay 超时，只输出 %0d/%0d groups", output_index, pTOTAL_GROUPS);
+        repeat (100) @(negedge dsc_clk);
+        if (output_index != pTOTAL_GROUPS)
+            $fatal(1, "flatness replay 超时，只输出 %0d/%0d groups", output_index, pTOTAL_GROUPS);
+        if (errors != 0 || group_errors != 0)
+            $fatal(1, "flatness replay 失败，flags=%0d groups=%0d", errors, group_errors);
+        $display("PASS: flatness replay 逐事务比对通过，共 %0d groups", output_index);
+        $finish;
     end
 endmodule

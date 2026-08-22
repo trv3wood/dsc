@@ -68,6 +68,10 @@ module dsce_flatness
     tDSC_PIXEL              i_group_check_diff [2:1];
     logic                   i_group_valid_flags;
     logic                   i_group_last_flags;
+    logic                   i_group_start_flags;
+    logic                   i_input_start_pending;
+    logic                   i_wait_previous_slice_last;
+    logic                   i_seen_slice_start;
     tDSC_PIXEL              i_group_flags [2:0];
     tDSC_PIXEL              i_group_diff_flags [2:1];
     logic [3:0]             i_check_write_ptr;
@@ -75,6 +79,7 @@ module dsce_flatness
     logic [4:0]             i_check_count;
     logic [1:0]             i_check_cooldown;
     logic                   i_check_last_fifo [15:0];
+    logic                   i_check_start_fifo [15:0];
     tDSC_PIXEL              i_check_group_fifo [15:0][2:0];
     tDSC_PIXEL              i_check_diff_fifo [15:0][2:1];
 
@@ -87,6 +92,10 @@ module dsce_flatness
         if (!dsc_reset_n) begin
             i_group_valid_flags <= 1'b0;
             i_group_last_flags <= 1'b0;
+            i_group_start_flags <= 1'b0;
+            i_input_start_pending <= 1'b0;
+            i_wait_previous_slice_last <= 1'b0;
+            i_seen_slice_start <= 1'b0;
             i_group_flags <= '{default: kDSC_PIXEL_INIT};
             i_group_diff_flags <= '{default: kDSC_PIXEL_INIT};
             i_check_write_ptr <= 4'd0;
@@ -94,30 +103,48 @@ module dsce_flatness
             i_check_count <= 5'd0;
             i_check_cooldown <= 2'd0;
             i_check_last_fifo <= '{default: 1'b0};
+            i_check_start_fifo <= '{default: 1'b0};
             i_check_group_fifo <= '{default: '{default: kDSC_PIXEL_INIT}};
             i_check_diff_fifo <= '{default: '{default: kDSC_PIXEL_INIT}};
         end else begin
-            check_pop = (i_check_count != 0) && (i_check_cooldown == 0);
+            check_pop = (i_check_count != 0) && (i_check_cooldown == 0) &&
+                (!i_check_start_fifo[i_check_read_ptr] || !i_wait_previous_slice_last);
             i_group_valid_flags <= 1'b0;
             i_group_last_flags <= 1'b0;
+            i_group_start_flags <= 1'b0;
+
+            if (dsc_start_of_slice) begin
+                i_input_start_pending <= 1'b1;
+                if (i_seen_slice_start)
+                    i_wait_previous_slice_last <= 1'b1;
+            end
+
+            if (dsc_group_valid_out && dsc_group_last_out && i_wait_previous_slice_last)
+                i_wait_previous_slice_last <= 1'b0;
 
             if (i_check_cooldown != 0)
                 i_check_cooldown <= i_check_cooldown - 1'b1;
 
             if (i_group_valid_check) begin
                 i_check_last_fifo[i_check_write_ptr] <= i_group_last_check;
+                i_check_start_fifo[i_check_write_ptr] <= i_input_start_pending;
                 i_check_group_fifo[i_check_write_ptr] <= i_group_check;
                 i_check_diff_fifo[i_check_write_ptr] <= i_group_check_diff;
                 i_check_write_ptr <= i_check_write_ptr + 1'b1;
+                if (i_input_start_pending)
+                    i_input_start_pending <= 1'b0;
             end
 
             if (check_pop) begin
                 i_group_valid_flags <= 1'b1;
                 i_group_last_flags <= i_check_last_fifo[i_check_read_ptr];
+                i_group_start_flags <= i_check_start_fifo[i_check_read_ptr];
                 i_group_flags <= i_check_group_fifo[i_check_read_ptr];
                 i_group_diff_flags <= i_check_diff_fifo[i_check_read_ptr];
                 i_check_read_ptr <= i_check_read_ptr + 1'b1;
                 i_check_cooldown <= 2'd3;
+                if (i_check_start_fifo[i_check_read_ptr])
+                    i_seen_slice_start <= 1'b1;
             end
 
             case ({i_group_valid_check, check_pop})
@@ -165,7 +192,7 @@ module dsce_flatness
         .cfg_pps                    (cfg_pps),
         .cfg_rc_range_max_qp_14     (cfg_rc_range_max_qp_14),
         // input data path from the flatness checks
-        .dsc_start_of_slice         (dsc_start_of_slice),
+        .dsc_start_of_slice         (i_group_start_flags),
         .dsc_group_valid_in         (i_group_valid_flags),
         .dsc_group_last_in          (i_group_last_flags),
         .dsc_group_in               (i_group_flags),

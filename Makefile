@@ -1,6 +1,6 @@
 .PHONY: test golden images model model-clean model-run model-4k model-regression \
 	model-compile-commands rtl-clean rtl-regression rtl-top rtl-flatness-replay \
-	rtl-ich-decision-replay rtl-formal rtl-lint rtl-slang rtl-smoke
+	rtl-flatness-slice-boundary rtl-ich-decision-replay rtl-formal rtl-lint rtl-slang rtl-smoke
 
 GOLDEN_SEED ?= 0x445343
 GOLDEN_PATTERN ?= random
@@ -106,6 +106,16 @@ rtl-flatness-replay:
 		verilog_dsc/dsce_flat_flags.sv verilog_dsc/dsce_flatness.sv \
 		tests/verilator/tb_dsc_flatness_replay.sv
 	./obj_dir/Vtb_dsc_flatness_replay
+
+# 验证连续 slice 的 start 不会清除上一 slice 尚在排空的 flatness 事务。
+rtl-flatness-slice-boundary:
+	verilator --binary --timing --assert -Wall -Wno-fatal \
+		-Wno-WIDTH -Wno-UNUSED -Wno-IMPORTSTAR -Wno-BLKSEQ -Wno-TIMESCALEMOD \
+		--top-module tb_dsc_flatness_slice_boundary \
+		verilog_dsc/dsce_defs_pkg.sv verilog_dsc/dsce_flat_check.sv \
+		verilog_dsc/dsce_flat_flags.sv verilog_dsc/dsce_flatness.sv \
+		tests/verilator/tb_dsc_flatness_slice_boundary.sv
+	./obj_dir/Vtb_dsc_flatness_slice_boundary
 
 # 从模块输入边界回放冻结事务；可用 ICH_REPLAY_VECTOR/COUNT 切换窗口。
 rtl-ich-decision-replay:
