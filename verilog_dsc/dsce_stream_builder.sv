@@ -134,9 +134,14 @@ module dsce_stream_builder
             end // default is 8
         endcase
 
-        i_send_muxword[0] = (i_fullness[0] < i_max_syntax_size[0]) ? 1'b1 : 1'b0;
-        i_send_muxword[1] = (i_fullness[1] < i_max_syntax_size[1]) ? 1'b1 : 1'b0;
-        i_send_muxword[2] = (i_fullness[2] < i_max_syntax_size[1]) ? 1'b1 : 1'b0;
+        // 已收到 last 的 SSP 不再参与缺字判断；其余 SSP 仍按 C model 的
+        // ProcessGroupEnc 顺序处理尾部 syntax，不能提前切换到独立排空。
+        i_send_muxword[0] = (i_slice_end_seen[0] == 1'b0 &&
+                             i_fullness[0] < i_max_syntax_size[0]) ? 1'b1 : 1'b0;
+        i_send_muxword[1] = (i_slice_end_seen[1] == 1'b0 &&
+                             i_fullness[1] < i_max_syntax_size[1]) ? 1'b1 : 1'b0;
+        i_send_muxword[2] = (i_slice_end_seen[2] == 1'b0 &&
+                             i_fullness[2] < i_max_syntax_size[1]) ? 1'b1 : 1'b0;
         i_slice_target_words = (cfg_chunk_size * cfg_slice_height) /
                                ((cfg_bits_per_component < 4'd12) ? 16'd6 : 16'd8);
     end : SignalMap
