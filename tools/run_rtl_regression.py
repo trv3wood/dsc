@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import hashlib
 import subprocess
 import sys
 import time
@@ -102,16 +103,39 @@ def generate(case: Case) -> None:
         raise RuntimeError(f"{case.name}: golden 生成失败")
 
 
+def rtl_sources() -> tuple[Path, ...]:
+    """返回影响 Verilator 可执行文件的全部仓库内输入。"""
+    filelist = REPO / "tests/verilator/rtl.f"
+    sources = []
+    for line in filelist.read_text(encoding="utf-8").splitlines():
+        path = line.split("//", 1)[0].strip()
+        if path and not path.startswith("+"):
+            sources.append(REPO / path)
+    sources.extend((filelist, REPO / "tests/verilator/tb_dsc_e2e_multi.sv"))
+    return tuple(sources)
+
+
 def build() -> Path:
-    binary = ROOT / "obj" / "Vtb_dsc_e2e_multi"
-    command = [
+    flags = [
         "verilator", "--binary", "--timing", "--assert", "-Wall", "-Wno-fatal",
         "-Wno-WIDTH", "-Wno-UNUSED", "-Wno-IMPORTSTAR", "-Wno-PINCONNECTEMPTY",
         "-Wno-BLKSEQ", "-Wno-DECLFILENAME", "-Wno-GENUNNAMED", "-Wno-MULTIDRIVEN",
         "-Wno-TIMESCALEMOD", "--top-module", "tb_dsc_e2e_multi",
         "-f", "tests/verilator/rtl.f", "tests/verilator/tb_dsc_e2e_multi.sv",
-        "--Mdir", str(ROOT / "obj"),
     ]
+    digest = hashlib.sha256()
+    digest.update("\0".join(flags).encode())
+    version = run(["verilator", "--version"])
+    if version.returncode:
+        raise RuntimeError("无法读取 Verilator 版本")
+    digest.update(version.stdout.encode())
+    for source in rtl_sources():
+        digest.update(str(source.relative_to(REPO)).encode())
+        digest.update(source.read_bytes())
+    build_id = digest.hexdigest()[:16]
+    obj_dir = ROOT / "obj" / build_id
+    binary = obj_dir / "Vtb_dsc_e2e_multi"
+    command = flags + ["--Mdir", str(obj_dir)]
     result = run(command, log=ROOT / "logs" / "build.log")
     if result.returncode:
         raise RuntimeError("Verilator 构建失败")
