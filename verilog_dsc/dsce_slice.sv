@@ -109,6 +109,8 @@ module dsce_slice
     tDSC_QLEVEL                 i_rate_feedback_qp, i_rate_feedback_prev_qp;
     tDSC_QLEVEL                 i_flat_override_qp, i_flat_override_prev_qp;
     logic                       i_flat_override_valid;
+    logic [1:0]                 i_flatness_window_remaining;
+    logic                       i_rate_flatness_window;
 
     logic                       i_valid_fd;
     logic                       i_last_fd;
@@ -209,8 +211,8 @@ module dsce_slice
 
         // FlatnessAdjustment 在当前 group 编码完成后同时改写 stQp/prevQp，
         // 只影响下一次 rate-control 决策；不能反向修改并行的 fd 编码事务。
-        i_rate_feedback_qp = i_primary_qp;
-        i_rate_feedback_prev_qp = i_prev_qp;
+        i_rate_feedback_qp = i_primary_qp_rate;
+        i_rate_feedback_prev_qp = i_prev_qp_rate;
         if (i_valid_pd) begin
             if (!i_last_pd &&
                 i_vlc_flat_flags_aligned.group_flatness_type != kDSC_NOT_FLAT &&
@@ -229,7 +231,25 @@ module dsce_slice
         // 上一事务完成与下一事务进入 prediction 可能同拍。此时 flatness 的组合
         // feedback 已经是下一事务应使用的 QP，不能等寄存器下一拍提交后再查表。
         i_encoding_qp = i_valid_fd ? i_rate_feedback_qp : i_primary_qp;
+        i_rate_flatness_window = i_vlc_flat_flags_aligned.send_flatness ||
+                                 i_flatness_window_remaining != 2'd0;
     end : SignalMap
+
+    // C model 的 firstFlat 在完整四组 supergroup 内有效，rate 的 bit-save
+    // 门控不能只观察实际携带 flatness type 的单个 group。
+    always_ff @(posedge dsc_clk or negedge dsc_reset_n) begin : FlatnessWindowTracking
+        if (!dsc_reset_n) begin
+            i_flatness_window_remaining <= 2'd0;
+        end else if (i_start_of_slice_pd) begin
+            i_flatness_window_remaining <= 2'd0;
+        end else if (i_valid_pd) begin
+            if (i_vlc_flat_flags_aligned.send_flatness) begin
+                i_flatness_window_remaining <= 2'd3;
+            end else if (i_flatness_window_remaining != 2'd0) begin
+                i_flatness_window_remaining <= i_flatness_window_remaining - 1'b1;
+            end
+        end
+    end
 
     always_ff @(posedge dsc_clk or negedge dsc_reset_n) begin : FlatQpOverride
         if (!dsc_reset_n) begin
@@ -585,7 +605,7 @@ module dsce_slice
         .dsc_vlc_size               (i_vlc_size_dec),
         // DSC 1.2 的行末强制 QP 调整发生在 RateControl 之后，不应清除
         // 当前行已建立的 bit-save 状态。
-        .dsc_flatness_flag          ((i_vlc_flat_flags_aligned.group_flatness_type != 2'd0) && !i_last_pd),
+        .dsc_flatness_flag          (i_rate_flatness_window && !i_last_pd),
         // primary quant level
         .dsc_qp_valid_out           (i_valid_rc),
         .dsc_qp_valid_next          (i_valid_rc_next),
