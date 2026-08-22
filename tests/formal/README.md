@@ -16,6 +16,10 @@ make rtl-formal FORMAL_TASK=cover
 make rtl-formal FORMAL_SUITE=flatness_window FORMAL_TASK=prove
 make rtl-formal FORMAL_SUITE=stream_fifo_acceptance FORMAL_TASK=prove
 make rtl-formal FORMAL_SUITE=stream_fifo_acceptance FORMAL_TASK=cover
+make rtl-formal FORMAL_SUITE=ich_decision_history FORMAL_TASK=prove
 ```
+
+`ich_decision_history` 直接实例化 `dsce_ich_decision`，证明空泡期间输入即使抖动也
+不会污染事务历史，并检查 start-of-slice 对历史状态的清零；当前执行 12 拍有界证明。
 
 产物默认放在 `/tmp/dsc_formal/`

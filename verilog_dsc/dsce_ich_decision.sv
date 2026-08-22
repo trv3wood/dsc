@@ -219,11 +219,13 @@ module dsce_ich_decision
         // bitsPMode calculation
         if (dsc_residual_size_in[0] < i_adj_predicted_size[0]) begin
             i_bits_p_component[0] = 7'd1 + dsce_size_times_three(i_adj_predicted_size[0]);
-        end else if (dsc_residual_size_in[0] < i_max_residual_size[0] && i_prev_ich == 1'b1) begin
-            i_bits_p_component[0] = 7'd2 + dsc_residual_size_in[0] - i_adj_predicted_size[0] + dsce_size_times_three(dsc_residual_size_in[0]);
         end else begin
             i_bits_p_component[0] = 7'd1 + dsc_residual_size_in[0] - i_adj_predicted_size[0] + dsce_size_times_three(dsc_residual_size_in[0]);
         end // if
+        // 上一组为 ICH 时，luma 非最大 residual 需要独立增加一位；该规则同样
+        // 适用于 residual size 小于 adjusted predicted size 的分支。
+        if (i_prev_ich == 1'b1 && dsc_residual_size_in[0] < i_max_residual_size[0])
+            i_bits_p_component[0] = i_bits_p_component[0] + 7'd1;
 
         if (dsc_residual_size_in[1] < i_adj_predicted_size[1]) begin
             i_bits_p_component[1] = 7'd1 + dsce_size_times_three(i_adj_predicted_size[1]);

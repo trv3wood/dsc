@@ -1,6 +1,6 @@
 .PHONY: test golden images model model-clean model-run model-4k model-regression \
 	model-compile-commands rtl-clean rtl-regression rtl-top rtl-flatness-replay \
-	rtl-formal rtl-lint rtl-slang rtl-smoke
+	rtl-ich-decision-replay rtl-formal rtl-lint rtl-slang rtl-smoke
 
 GOLDEN_SEED ?= 0x445343
 GOLDEN_PATTERN ?= random
@@ -18,6 +18,9 @@ COV_DIR ?= /tmp/dsc_cov
 FORMAL_DIR ?= /tmp/dsc_formal
 FORMAL_SUITE ?= flatness_transaction_fifo
 FORMAL_TASK ?= prove
+ICH_REPLAY_VECTOR ?= tests/verilator/vectors/ich_decision_vesa_boats_tx0_307.hex
+ICH_REPLAY_COUNT ?= 308
+ICH_REPLAY_MDIR ?= /tmp/dsc_ich_replay_obj
 VERILATOR_WARNINGS := -Wall -Wno-fatal -Wno-WIDTH -Wno-UNUSED \
 	-Wno-IMPORTSTAR -Wno-PINCONNECTEMPTY -Wno-BLKSEQ -Wno-DECLFILENAME \
 	-Wno-GENUNNAMED -Wno-MULTIDRIVEN -Wno-TIMESCALEMOD
@@ -103,6 +106,15 @@ rtl-flatness-replay:
 		verilog_dsc/dsce_flat_flags.sv verilog_dsc/dsce_flatness.sv \
 		tests/verilator/tb_dsc_flatness_replay.sv
 	./obj_dir/Vtb_dsc_flatness_replay
+
+# 从模块输入边界回放冻结事务；可用 ICH_REPLAY_VECTOR/COUNT 切换窗口。
+rtl-ich-decision-replay:
+	verilator $(VERILATOR_COMMON) \
+		--top-module tb_dsce_ich_decision_replay \
+		verilog_dsc/dsce_defs_pkg.sv verilog_dsc/dsce_ich_decision.sv \
+		tests/verilator/tb_dsce_ich_decision_replay.sv --Mdir $(ICH_REPLAY_MDIR)
+	$(ICH_REPLAY_MDIR)/Vtb_dsce_ich_decision_replay \
+		+vector=$(ICH_REPLAY_VECTOR) +vector_count=$(ICH_REPLAY_COUNT)
 
 # FORMAL_TASK=prove 证明安全契约；FORMAL_TASK=cover 生成边界反例轨迹。
 rtl-formal:

@@ -1,0 +1,18 @@
+[tasks]
+prove
+
+[options]
+prove: mode bmc
+prove: depth 12
+
+[engines]
+prove: smtbmc boolector
+
+[script]
+read_slang --top ich_decision_history_formal dsce_defs_pkg.sv dsce_ich_decision.sv ich_decision_history_formal.sv
+prep -top ich_decision_history_formal
+
+[files]
+verilog_dsc/dsce_defs_pkg.sv
+verilog_dsc/dsce_ich_decision.sv
+tests/formal/ich_decision_history_formal.sv
