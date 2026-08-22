@@ -92,6 +92,7 @@ module dsce_stream_builder
     logic [6:0]                     i_muxword_size;
     logic [6:0]                     i_max_syntax_size [1:0];
     logic [2:0]                     i_slice_end_seen;
+    logic                           i_cg_tail_pending;
     logic [15:0]                    i_slice_word_count;
     logic [15:0]                    i_slice_target_words;
 
@@ -162,6 +163,7 @@ module dsce_stream_builder
             i_fullness <= '{default: 7'd0};
             i_muxword_tx_select <= 2'd0;
             i_slice_end_seen <= 3'b000;
+            i_cg_tail_pending <= 1'b0;
             i_slice_word_count <= 16'd0;
 
         end else begin
@@ -176,6 +178,7 @@ module dsce_stream_builder
                 i_builder_state <= (i_slice_word_count < i_slice_target_words) ?
                                    eBS_SLICE_PAD : eBS_SLICE_DRAIN;
                 i_slice_end_seen <= 3'b000;
+                i_cg_tail_pending <= 1'b0;
                 if (i_slice_word_count >= i_slice_target_words) begin
                     i_slice_word_count <= 16'd0;
                 end
@@ -187,7 +190,13 @@ module dsce_stream_builder
                     end // eBS_INIT
 
                     eBS_CHECK_COUNTERS:  begin
-                        case (i_send_muxword)
+                        // luma SSP 已结束而两个 chroma SSP 同时缺字时，先发送
+                        // SSP2 中已挂起的尾字，匹配 C model 的 slice 尾部复用顺序。
+                        if (i_slice_end_seen[0] == 1'b1 && i_cg_tail_pending == 1'b0 &&
+                            i_send_muxword == 3'b110) begin
+                            i_builder_state <= eBS_WAIT_MUXWORD_AVAIL;
+                            i_muxword_tx_select <= 2'd2;
+                        end else case (i_send_muxword)
                             3'b001, 3'b011, 3'b111, 3'b101:  begin
                                 i_builder_state <= eBS_WAIT_MUXWORD_AVAIL;
                                 i_muxword_tx_select <= 2'd0;
@@ -233,6 +242,9 @@ module dsce_stream_builder
 
                         if (i_muxword_last[i_muxword_tx_select] == 1'b1) begin
                             i_slice_end_seen[i_muxword_tx_select] <= 1'b1;
+                            if (i_muxword_tx_select == 2'd0) begin
+                                i_cg_tail_pending <= i_send_muxword[2];
+                            end
                         end
 
                         case (i_muxword_tx_select)
