@@ -71,6 +71,8 @@ module dsce_rate_adjust
     tDSC_QLEVEL                 i_somewhat_flat_threshold;
     tDSC_QLEVEL                 i_very_flat_qp;
     tDSC_QLEVEL                 i_adjusted_qp;
+    tDSC_QLEVEL                 i_adjusted_prev_qp;
+    tDSC_QLEVEL                 i_line_end_primary_qp;
     tDSC_QLEVEL                 i_last_used_qp_in_slice_line;
     logic   [4:0]               i_range_max_qp_14;
     logic   [2:0]               i_valid_pipe, i_last_pipe;
@@ -91,13 +93,21 @@ module dsce_rate_adjust
         // ----- determine the end of line adjusted Qp ----- //
 `ifdef DSC_FLATNESS_MODEL_SUBSTITUTE
         i_adjusted_qp = tDSC_QLEVEL'(dsc_flatness_adjust_qp_model(
+            i_line_end_primary_qp,
+            i_somewhat_flat_threshold,
+            i_very_flat_qp
+        ));
+        i_adjusted_prev_qp = tDSC_QLEVEL'(dsc_flatness_adjust_qp_model(
             i_last_used_qp_in_slice_line,
             i_somewhat_flat_threshold,
             i_very_flat_qp
         ));
 `else
-        // DSC 1.2 行尾强制 flatness 使用本行最后实际采用的 QP，而非下一组 RC QP。
-        i_adjusted_qp = (i_last_used_qp_in_slice_line < i_somewhat_flat_threshold) ? dsce_adjust_qp_somewhat_flat(i_last_used_qp_in_slice_line) : i_very_flat_qp;
+        // C model 先提交本组 RateControl，再分别调整 stQp 与 prevQp。
+        i_adjusted_qp = (i_line_end_primary_qp < i_somewhat_flat_threshold) ?
+                        dsce_adjust_qp_somewhat_flat(i_line_end_primary_qp) : i_very_flat_qp;
+        i_adjusted_prev_qp = (i_last_used_qp_in_slice_line < i_somewhat_flat_threshold) ?
+                             dsce_adjust_qp_somewhat_flat(i_last_used_qp_in_slice_line) : i_very_flat_qp;
 `endif
 
         // ----- adjust the qp for rate control ----- //
@@ -105,7 +115,7 @@ module dsce_rate_adjust
         // flat QP；本行最后实际采用的 QP 等价于行末组的 primaryQp。
         if (i_orig_is_flat == 1'b1 && i_last_used_qp_in_slice_line < i_range_max_qp_14) begin
             dsc_primary_qp_out = i_adjusted_qp;
-            dsc_prev_qp_out = i_adjusted_qp;
+            dsc_prev_qp_out = i_adjusted_prev_qp;
         end else if (i_orig_is_flat == 1'b1) begin
             // 行末 flush 使行首组 fd 延后到行末组提交之后，dsc_primary_qp 已
             // 推进到 stQp(G)，而 C model 的 prevQp 仍为 stQp(G-1)。行末 QP
@@ -141,6 +151,7 @@ module dsce_rate_adjust
             i_valid_pipe <= 3'b000;
             i_last_pipe <= 3'b000;
             i_last_used_qp_in_slice_line <= kDSC_QLEVEL_ZERO;
+            i_line_end_primary_qp <= kDSC_QLEVEL_ZERO;
 
         end else begin
 
@@ -156,6 +167,12 @@ module dsce_rate_adjust
             if (dsc_group_valid_in == 1'b1 && dsc_group_last_in == 1'b1) begin
                 i_last_used_qp_in_slice_line <= i_rc_primary_qp_effective;
             end // if
+
+            // 行末 group 的 RC 结果比实际采用的 QP 晚三级到达；在 flatness
+            // 判定置位的同一沿锁存，供下一拍同时更新 stQp 与 prevQp。
+            if (i_valid_pipe[2] == 1'b1 && i_last_pipe[2] == 1'b1) begin
+                i_line_end_primary_qp <= i_rc_primary_qp_effective;
+            end
 
             // ----- pipeline the enable for proper stage timing ----- //
             i_valid_pipe <= {i_valid_pipe[1:0], dsc_group_valid_in};
