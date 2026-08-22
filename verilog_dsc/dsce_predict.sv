@@ -56,6 +56,7 @@ module dsce_predict
 
     // residual outputs
     output logic                 dsc_group_valid_out,          // valid predicted pixels out
+    output logic                 dsc_start_of_slice_out,       // 与预测输出事务对齐的 slice 起始
     output logic                 dsc_last_out,                 // last flag out
     output logic                 dsc_use_bp_out,               // use block predict output
     output tDSC_PIXEL            dsc_predict_bp_out [2:0],     // block predict
@@ -73,6 +74,7 @@ module dsce_predict
     //  internal signal definitions
     logic                 i_valid_mpp;
     logic                 i_last_mpp;
+    logic [2:0]           i_start_pipe;
     logic                 i_valid_mmap;
 
     logic                 i_valid_bp;
@@ -149,6 +151,33 @@ module dsce_predict
             i_line_prev_in_cg[prx] = dsc_line_prev_in[prx].cg;
         end : PrevLineAssignLoop
     end : SignalMap
+
+    // decision 组合逻辑会同时采样 MPP、MMAP 和 BP；任何分支 valid/last
+    // 错位都会把上一事务的数据与当前事务混合，必须在最早边界直接报错。
+    always_ff @(posedge dsc_clk) begin : PredictionAlignmentChecks
+        if (dsc_reset_n) begin
+            assert (i_valid_mpp == i_valid_mmap)
+                else $error("MPP/MMAP prediction valid misalignment");
+            if (pINCLUDE_BLOCK_PREDICTION == 1)
+                assert (i_valid_mpp == i_valid_bp)
+                    else $error("MPP/BP prediction valid misalignment");
+            if (i_valid_mpp) begin
+                assert (i_last_mpp == i_last_bp)
+                    else $error("MPP/BP prediction last misalignment");
+            end
+        end
+    end
+
+    // 与 MPP 的三拍 valid 流水保持同一延迟，供 PD 侧状态机原子复位。
+    always_ff @(posedge dsc_clk or negedge dsc_reset_n) begin : StartAlignment
+        if (!dsc_reset_n) begin
+            i_start_pipe <= 3'b000;
+            dsc_start_of_slice_out <= 1'b0;
+        end else begin
+            i_start_pipe <= {i_start_pipe[1:0], dsc_start_of_slice};
+            dsc_start_of_slice_out <= i_start_pipe[2];
+        end
+    end
 
 
     // ------------------------------------------------------------------------------------------------------------

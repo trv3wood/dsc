@@ -79,6 +79,12 @@ module dsce_slice
     // ------------------------------------------------------------------------------------------------------------
 
     logic                       i_start_of_slice_slb;
+    logic                       i_start_of_slice_fd;
+    logic                       i_start_of_slice_pd;
+    logic                       i_fd_start_pending;
+    logic                       i_fd_previous_slice_done;
+    logic [15:0]                i_fd_line_count;
+    logic [1:0]                 i_fd_drain_count;
     logic                       i_valid_slb;
     logic                       i_last_slb;
     tDSC_PIXEL                  i_group_slb [2:0];
@@ -146,6 +152,52 @@ module dsce_slice
     // ------------------------------------------------------------------------------------------------------------
     //                                             processes
     // ------------------------------------------------------------------------------------------------------------
+
+    // slice_buffer 的 start 脉冲早于 flatness 输出。下一 slice 到达时上一
+    // slice 的末尾事务仍可能在 FD/PD 流水中，因此按 FD 的 accepted group
+    // 和 slice_height 重新提交 start，禁止下游状态机提前复位。
+    always_ff @(posedge dsc_clk or negedge dsc_reset_n) begin : FdSliceStartAlignment
+        if (!dsc_reset_n) begin
+            i_start_of_slice_fd <= 1'b0;
+            i_fd_start_pending <= 1'b0;
+            i_fd_previous_slice_done <= 1'b1;
+            i_fd_line_count <= 16'd0;
+            i_fd_drain_count <= 2'd0;
+        end else begin
+            i_start_of_slice_fd <= 1'b0;
+
+            if (i_start_of_slice_slb)
+                i_fd_start_pending <= 1'b1;
+
+            // start 必须先于首个 valid 一拍提交，使 MMAP/ICH/码控先完成复位；
+            // 不能与首个事务同拍，否则这些状态机会忽略该事务。
+            if (i_fd_drain_count != 0) begin
+                i_fd_drain_count <= i_fd_drain_count - 1'b1;
+                if (i_fd_drain_count == 2'd1)
+                    i_fd_previous_slice_done <= 1'b1;
+            end
+
+            if (i_fd_start_pending &&
+                (i_fd_previous_slice_done || i_fd_drain_count == 2'd1)) begin
+                i_start_of_slice_fd <= 1'b1;
+                i_fd_start_pending <= 1'b0;
+                i_fd_previous_slice_done <= 1'b0;
+                i_fd_drain_count <= 2'd0;
+                i_fd_line_count <= 16'd0;
+            end
+
+            if (i_valid_fd && i_last_fd) begin
+                if (i_fd_line_count + 16'd1 >= cfg_pps.slice_height) begin
+                    // MMAP 在 FD valid 后第三拍提交；到该拍再复位可保留末组，
+                    // 同时先于四拍节奏下的下一 slice 首组。
+                    i_fd_drain_count <= 2'd3;
+                    i_fd_line_count <= 16'd0;
+                end else begin
+                    i_fd_line_count <= i_fd_line_count + 16'd1;
+                end
+            end
+        end
+    end
 
     always_comb begin : SignalMap
         cfg_slice_status.slice_overflow = i_slice_buffer_overflow;
@@ -331,7 +383,7 @@ module dsce_slice
         .dsc_pps_update             (dsc_pps_update),
         .cfg_pps                    (cfg_pps),
         // input data path
-        .dsc_start_of_slice         (i_start_of_slice_slb),
+        .dsc_start_of_slice         (i_start_of_slice_fd),
         .dsc_group_valid_in         (i_valid_fd),
         .dsc_group_last_in          (i_last_fd),
         .dsc_group_in               (i_group_fd),
@@ -343,6 +395,7 @@ module dsce_slice
         .dsc_qlevel_c               (i_qlevel_c),
         // residual output
         .dsc_group_valid_out        (i_valid_pd),
+        .dsc_start_of_slice_out     (i_start_of_slice_pd),
         .dsc_last_out               (i_last_pd),
         .dsc_use_bp_out             (i_use_bp_pd),
         .dsc_predict_bp_out         (i_predict_bp),
@@ -370,7 +423,7 @@ module dsce_slice
         .cfg_pps                    (cfg_pps),
         .dsc_pps_update             (dsc_pps_update),
         // control signal and previous line input
-        .dsc_start_of_slice         (i_start_of_slice_slb),
+        .dsc_start_of_slice         (i_start_of_slice_fd),
         .dsc_start_of_slice_line    (1'b0),
         .dsc_line_prev_in           (i_prev_line_ich),
         // original pixel data path
@@ -456,7 +509,7 @@ module dsce_slice
         .dsc_reset_n                (dsc_reset_n),
         .dsc_pps_update             (dsc_pps_update),
         .cfg_pps                    (cfg_pps),
-        .dsc_start_of_slice         (i_start_of_slice_slb),
+        .dsc_start_of_slice         (i_start_of_slice_fd),
         // line write interface
         .dsc_recon_valid_in         (i_valid_pd),
         .dsc_recon_last_in          (i_last_pd),
@@ -484,7 +537,7 @@ module dsce_slice
         .cfg_pps                    (cfg_pps),
         .cfg_rc_range_max_qp_14     (cfg_rcps.rc_range_parameters[14][10:6]),
         // group input path
-        .dsc_start_of_slice         (i_start_of_slice_slb),
+        .dsc_start_of_slice         (i_start_of_slice_fd),
         .dsc_group_valid_in         (i_valid_fd),
         .dsc_group_last_in          (i_last_fd),
         // rate control qp input
@@ -512,7 +565,7 @@ module dsce_slice
         .cfg_pps                    (cfg_pps),
         .cfg_rcps                   (cfg_rcps),
         // input data path
-        .dsc_start_of_slice         (i_start_of_slice_slb),
+        .dsc_start_of_slice         (i_start_of_slice_pd),
         .dsc_group_valid_in         (i_valid_pd),
         .dsc_last_in                (i_last_pd),
         .dsc_coded_group_size       (i_coded_group_size),
@@ -577,7 +630,7 @@ module dsce_slice
         .cfg_pps                    (cfg_pps),
         .cfg_rcps                   (cfg_rcps),
         // prediction residuals
-        .dsc_start_of_slice         (i_start_of_slice_slb),
+        .dsc_start_of_slice         (i_start_of_slice_pd),
         .dsc_predict_valid_in       (i_valid_pd),
         .dsc_predict_last_in        (i_last_pd),
         .dsc_primary_qp_in          (i_primary_qp_res),
