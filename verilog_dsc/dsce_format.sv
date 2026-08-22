@@ -83,6 +83,7 @@ module dsce_format
     logic [15:0]                    i_data_vlc [2:0];
     logic [4:0]                     i_size_vlc [2:0];
     logic [2:0]                     i_valid_mw;
+    logic [2:0]                     i_last_mw;
     logic [63:0]                    i_muxword [2:0];
     logic [2:0]                     i_unit_size_valid_vlc;
     logic [5:0]                     i_coded_unit_size_vlc [2:0];
@@ -124,7 +125,11 @@ module dsce_format
         end else if (dsc_pps_update == 1'b1) begin
             i_slice_line_count <= 16'd0;
         end else if (i_last_vlc[0] == 1'b1) begin
-            i_slice_line_count <= i_slice_line_count + 16'd1;
+            if (i_slice_last == 1'b1) begin
+                i_slice_line_count <= 16'd0;
+            end else begin
+                i_slice_line_count <= i_slice_line_count + 16'd1;
+            end
         end
     end : SliceLastDetect
 
@@ -193,6 +198,7 @@ module dsce_format
             .dsc_stream_size_in     (i_size_vlc[mx]),
             // output mux word
             .dsc_muxword_valid_out  (i_valid_mw[mx]),
+            .dsc_muxword_last_out   (i_last_mw[mx]),
             .dsc_muxword_out        (i_muxword[mx])
         );
     end endgenerate
@@ -208,10 +214,12 @@ module dsce_format
         .dsc_reset_n                (dsc_reset_n),
         .cfg_bits_per_component     (cfg_pps.bits_per_component),
         .cfg_convert_rgb            (cfg_pps.convert_rgb),
+        .cfg_chunk_size             (cfg_pps.chunk_size),
+        .cfg_slice_height           (cfg_pps.slice_height),
         // input path from muxword builder
         .dsc_start_of_slice         (dsc_start_of_slice),
         .dsc_muxword_valid_in       (i_valid_mw),
-        .dsc_muxword_last_in        (3'b000),
+        .dsc_muxword_last_in        (i_last_mw),
         .dsc_muxword_in             (i_muxword),
         // syntax size input from VLC
         .dsc_unit_size_valid_in     (i_unit_size_valid_vlc),

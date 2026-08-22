@@ -35,6 +35,8 @@ module dsce_stream_builder
     input  logic                    dsc_reset_n,                    // DSC domain reset
     input  logic [3:0]              cfg_bits_per_component,         // stream bpc
     input  logic                    cfg_convert_rgb,                // color conversion setting
+    input  logic [15:0]             cfg_chunk_size,                 // 每条 slice 行的字节数
+    input  logic [15:0]             cfg_slice_height,               // 每个 slice 的行数
 
     // input path from muxword builder
     input  logic                    dsc_start_of_slice,             // start of slice flag
@@ -60,6 +62,7 @@ module dsce_stream_builder
     // ----- buffer connections ----- //
     logic [2:0]                     i_syntax_valid;
     logic                           i_syntax_ready;
+    logic [2:0]                     i_syntax_start;
     logic [2:0]                     i_syntax_last;
     logic [5:0]                     i_syntax_size [2:0];
 
@@ -77,13 +80,20 @@ module dsce_stream_builder
         eBS_CHECK_COUNTERS,
         eBS_UPDATE_COUNTERS,
         eBS_WAIT_MUXWORD_AVAIL,
-        eBS_TRANSFER_MUXWORD
+        eBS_TRANSFER_MUXWORD,
+        eBS_SLICE_PAD,
+        eBS_SLICE_DRAIN,
+        eBS_SLICE_DRAIN_WAIT_1,
+        eBS_SLICE_DRAIN_WAIT_2
     } i_builder_state;
 
     logic [1:0]                     i_muxword_tx_select;
     logic [2:0]                     i_send_muxword;
     logic [6:0]                     i_muxword_size;
     logic [6:0]                     i_max_syntax_size [1:0];
+    logic [2:0]                     i_slice_end_seen;
+    logic [15:0]                    i_slice_word_count;
+    logic [15:0]                    i_slice_target_words;
 
 
     // ------------------------------------------------------------------------------------------------------------
@@ -127,6 +137,8 @@ module dsce_stream_builder
         i_send_muxword[0] = (i_fullness[0] < i_max_syntax_size[0]) ? 1'b1 : 1'b0;
         i_send_muxword[1] = (i_fullness[1] < i_max_syntax_size[1]) ? 1'b1 : 1'b0;
         i_send_muxword[2] = (i_fullness[2] < i_max_syntax_size[1]) ? 1'b1 : 1'b0;
+        i_slice_target_words = (cfg_chunk_size * cfg_slice_height) /
+                               ((cfg_bits_per_component < 4'd12) ? 16'd6 : 16'd8);
     end : SignalMap
 
 
@@ -144,6 +156,8 @@ module dsce_stream_builder
             i_syntax_ready <= 1'b0;
             i_fullness <= '{default: 7'd0};
             i_muxword_tx_select <= 2'd0;
+            i_slice_end_seen <= 3'b000;
+            i_slice_word_count <= 16'd0;
 
         end else begin
 
@@ -151,11 +165,16 @@ module dsce_stream_builder
             i_muxword_ready <= 3'b000;
             i_syntax_ready <= 1'b0;
 
-            if (dsc_start_of_slice == 1'b1) begin
-                i_builder_state <= eBS_INIT;
+            if (i_slice_end_seen == 3'b111) begin
+                i_fullness <= '{default: 7'd0};
                 i_muxword_tx_select <= 2'd0;
+                i_builder_state <= (i_slice_word_count < i_slice_target_words) ?
+                                   eBS_SLICE_PAD : eBS_SLICE_DRAIN;
+                i_slice_end_seen <= 3'b000;
+                if (i_slice_word_count >= i_slice_target_words) begin
+                    i_slice_word_count <= 16'd0;
+                end
             end else begin
-
                 case (i_builder_state)
                     eBS_INIT:  begin
                         i_fullness <= '{default: 7'd0};
@@ -204,7 +223,12 @@ module dsce_stream_builder
 
                     eBS_TRANSFER_MUXWORD:  begin
                         dsc_muxword_valid_out <= 1'b1;
+                        i_slice_word_count <= i_slice_word_count + 16'd1;
                         i_builder_state <= eBS_CHECK_COUNTERS;
+
+                        if (i_muxword_last[i_muxword_tx_select] == 1'b1) begin
+                            i_slice_end_seen[i_muxword_tx_select] <= 1'b1;
+                        end
 
                         case (i_muxword_tx_select)
                             2'd2:  begin
@@ -221,6 +245,36 @@ module dsce_stream_builder
                             end // co
                         endcase
                     end // eBS_TRANSFER_MUXWORD
+
+                    eBS_SLICE_PAD:  begin
+                        // 固定 chunk 未填满时，在下一 slice 的压缩数据之前补零。
+                        dsc_muxword_valid_out <= 1'b1;
+                        dsc_muxword_out <= 64'd0;
+                        if (i_slice_word_count + 16'd1 >= i_slice_target_words) begin
+                            i_slice_word_count <= 16'd0;
+                            i_builder_state <= eBS_SLICE_DRAIN;
+                        end else begin
+                            i_slice_word_count <= i_slice_word_count + 16'd1;
+                        end
+                    end // eBS_SLICE_PAD
+
+                    eBS_SLICE_DRAIN:  begin
+                        // 尾字可能早于旧 slice 的 size 结算完毕；只丢弃边界前的旧 size。
+                        if (i_syntax_valid == 3'b111 && i_syntax_start == 3'b111) begin
+                            i_builder_state <= eBS_CHECK_COUNTERS;
+                        end else if (i_syntax_valid == 3'b111) begin
+                            i_syntax_ready <= 1'b1;
+                            i_builder_state <= eBS_SLICE_DRAIN_WAIT_1;
+                        end
+                    end // eBS_SLICE_DRAIN
+
+                    eBS_SLICE_DRAIN_WAIT_1:  begin
+                        i_builder_state <= eBS_SLICE_DRAIN_WAIT_2;
+                    end // eBS_SLICE_DRAIN_WAIT_1
+
+                    eBS_SLICE_DRAIN_WAIT_2:  begin
+                        i_builder_state <= eBS_SLICE_DRAIN;
+                    end // eBS_SLICE_DRAIN_WAIT_2
 
                     // default for synthesis only
                     default:  begin
@@ -257,6 +311,7 @@ module dsce_stream_builder
             // output to the stream builder
             .dsc_coded_size_valid_out   (i_syntax_valid[gx]),
             .dsc_coded_size_ready_out   (i_syntax_ready),
+            .dsc_coded_size_start_out   (i_syntax_start[gx]),
             .dsc_coded_size_last_out    (i_syntax_last[gx]),
             .dsc_coded_size_out         (i_syntax_size[gx]),
             .dsc_muxword_valid_out      (i_muxword_valid[gx]),
@@ -267,4 +322,3 @@ module dsce_stream_builder
     end endgenerate
 
 endmodule : dsce_stream_builder
-

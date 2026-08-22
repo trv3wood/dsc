@@ -46,6 +46,7 @@ module dsce_muxword
 
     // output mux word
     output logic                    dsc_muxword_valid_out,  // valid predicted pixels out
+    output logic                    dsc_muxword_last_out,   // slice 的最后一个 muxword
     output logic [63:0]             dsc_muxword_out         // mux word out (48 or 64)
 );
 
@@ -73,6 +74,7 @@ module dsce_muxword
     logic [63:0]                    i_remainder_word_out; // 余量按整字字节序的输出
 
     logic                           i_muxword_staging_valid;
+    logic                           i_muxword_staging_last;
     logic [63:0]                    i_muxword_staging;
     logic                           i_muxword_flush;
 
@@ -179,6 +181,7 @@ module dsce_muxword
     always_ff@(posedge dsc_clk or negedge dsc_reset_n) begin : WordPacking
         if (dsc_reset_n == 1'b0) begin
             dsc_muxword_valid_out <= 1'b0;
+            dsc_muxword_last_out <= 1'b0;
             dsc_muxword_out <= 64'd0;
 
             i_mux_buffer <= 64'd0;
@@ -186,6 +189,7 @@ module dsce_muxword
             i_bits_in_word <= 7'd0;
 
             i_muxword_staging_valid <= 1'b0;
+            i_muxword_staging_last <= 1'b0;
             i_muxword_staging <= 64'd0;
             i_muxword_flush <= 1'b0;
 
@@ -202,6 +206,7 @@ module dsce_muxword
             //  packing and forwarding
             // --------------------------------------
             dsc_muxword_valid_out <= 1'b0;
+            dsc_muxword_last_out <= 1'b0;
             i_muxword_staging_valid <= 1'b0;
 
             if (dsc_pps_update == 1'b1) begin
@@ -211,6 +216,8 @@ module dsce_muxword
                 if (kUSE_FLUSH_LOGIC == 1) begin
                     if (i_word_complete == 1'b1 || dsc_vlc_last_in == 1'b1) begin
                         i_muxword_staging_valid <= 1'b1;
+                        i_muxword_staging_last <= dsc_vlc_last_in && dsc_slice_last_in &&
+                                                  (i_bits_in_next_word == i_max_bits_per_word);
                         i_muxword_staging <= i_output_word;
                         i_mux_buffer <= i_remainder_word;
                         i_bits_in_word <= (dsc_vlc_last_in == 1'b1) ? 7'd0 : i_bits_in_next_word - i_max_bits_per_word;
@@ -220,6 +227,7 @@ module dsce_muxword
                         end // if
                     end else begin
                         i_muxword_staging_valid <= 1'b0;
+                        i_muxword_staging_last <= 1'b0;
                         i_mux_buffer <= i_input_word;
                         i_bits_in_word <= i_bits_in_next_word;
                     end // if
@@ -228,6 +236,8 @@ module dsce_muxword
 
                     if (i_word_complete == 1'b1) begin
                         i_muxword_staging_valid <= 1'b1;
+                        i_muxword_staging_last <= dsc_vlc_last_in && dsc_slice_last_in &&
+                                                  (i_bits_in_next_word == i_max_bits_per_word);
                         i_muxword_staging <= i_output_word;
                         i_mux_buffer <= i_remainder_word;
                         i_bits_in_word <= i_bits_in_next_word - i_max_bits_per_word;
@@ -239,11 +249,13 @@ module dsce_muxword
                     end else if (dsc_vlc_last_in == 1'b1 && dsc_slice_last_in == 1'b1) begin
                         // slice 末尾：不足 48 位的部分字左移对齐后发射。
                         i_muxword_staging_valid <= 1'b1;
+                        i_muxword_staging_last <= 1'b1;
                         i_muxword_staging <= i_flush_output_word;
                         i_mux_buffer <= 64'd0;
                         i_bits_in_word <= 7'd0;
                     end else begin
                         i_muxword_staging_valid <= 1'b0;
+                        i_muxword_staging_last <= 1'b0;
                         i_mux_buffer <= i_input_word;
                         i_bits_in_word <= i_bits_in_next_word;
                     end // if
@@ -251,6 +263,7 @@ module dsce_muxword
             end else if (i_muxword_flush == 1'b1) begin
                 i_muxword_flush <= 1'b0;
                 i_muxword_staging_valid <= 1'b1;
+                i_muxword_staging_last <= 1'b1;
                 i_muxword_staging <= i_remainder_word_out;
                 i_bits_in_word <= 7'd0;
             end // if
@@ -265,6 +278,7 @@ module dsce_muxword
             end else begin
                 if (i_muxword_staging_valid == 1'b1) begin
                     dsc_muxword_valid_out <= 1'b1;
+                    dsc_muxword_last_out <= i_muxword_staging_last;
                     dsc_muxword_out <= i_muxword_staging;
                 end else begin
                     dsc_muxword_valid_out <= 1'b0;
@@ -275,4 +289,3 @@ module dsce_muxword
     end : WordPacking
 
 endmodule : dsce_muxword
-

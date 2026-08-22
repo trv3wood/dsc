@@ -30,6 +30,7 @@ module stream_fifo_acceptance_formal(
         .dsc_coded_unit_size_in   (input_data),
         .dsc_coded_size_valid_out (output_valid),
         .dsc_coded_size_ready_out (1'b0),
+        .dsc_coded_size_start_out (),
         .dsc_coded_size_last_out  (),
         .dsc_coded_size_out       (output_data),
         .dsc_muxword_valid_out    (),

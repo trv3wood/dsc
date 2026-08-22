@@ -48,6 +48,7 @@ module dsce_stream_fifo
     // output to the stream builder
     output logic                    dsc_coded_size_valid_out,   // unit size valid output
     input  logic                    dsc_coded_size_ready_out,   // unit size ready output
+    output logic                    dsc_coded_size_start_out,   // slice 的首个 unit size
     output logic                    dsc_coded_size_last_out,    // unit size valid output
     output logic [5:0]              dsc_coded_size_out,         // unit size output
 
@@ -67,15 +68,19 @@ module dsce_stream_fifo
 
     // ----- buffer signals ----- //
     logic [63:0]                    i_muxword_buffer [kMUXWORD_BUFFER_SIZE-1:0];
+    logic                           i_muxword_last_buffer [kMUXWORD_BUFFER_SIZE-1:0];
     logic [kMUXWORD_PTR_HIGH:0]     i_muxword_write_ptr, i_muxword_write_ptr_plus_1;
     logic [kMUXWORD_PTR_HIGH:0]     i_muxword_read_ptr, i_muxword_read_ptr_plus_1;
     logic                           i_muxword_full;
     logic                           i_muxword_read;
 
     logic [5:0]                     i_syntax_buffer [kSYNTAX_BUFFER_SIZE-1:0];
+    logic                           i_syntax_start_buffer [kSYNTAX_BUFFER_SIZE-1:0];
     logic [kSYNTAX_PTR_HIGH:0]      i_syntax_write_ptr, i_syntax_write_ptr_plus_1;
     logic [kSYNTAX_PTR_HIGH:0]      i_syntax_read_ptr, i_syntax_read_ptr_plus_1;
     logic                           i_syntax_full;
+    logic                           i_syntax_start_pending;
+    logic                           i_seen_slice_start;
 
     // ------------------------------------------------------------------------------------------------------------
     //                                             processes
@@ -99,46 +104,55 @@ module dsce_stream_fifo
     always_ff@(posedge dsc_clk or negedge dsc_reset_n) begin : FlowControlBuffers
         if (dsc_reset_n == 1'b0) begin
             i_muxword_buffer <= '{default: 64'd0};
+            i_muxword_last_buffer <= '{default: 1'b0};
             i_muxword_write_ptr <= '{default: 1'b0};
             i_muxword_full <= 1'b0;
             i_syntax_buffer <= '{default: 5'd0};
+            i_syntax_start_buffer <= '{default: 1'b0};
             i_syntax_write_ptr <= '{default: 1'b0};
             i_syntax_full <= 1'b0;
+            i_syntax_start_pending <= 1'b0;
+            i_seen_slice_start <= 1'b0;
 
         end else begin
 
             // ----- muxword buffer ----- //
             if (dsc_muxword_valid_in == 1'b1) begin
                 i_muxword_buffer[i_muxword_write_ptr] <= dsc_muxword_in;
+                i_muxword_last_buffer[i_muxword_write_ptr] <= dsc_muxword_last_in;
             end // if
 
-            if (dsc_start_of_slice == 1'b1) begin
-                i_muxword_write_ptr <= '{default: 1'b0};
-            end else if (dsc_muxword_valid_in == 1'b1) begin
-                if (dsc_muxword_last_in == 1'b1) begin
-                    i_muxword_write_ptr <= '{default: 1'b0};
-                end else begin
-                    i_muxword_write_ptr <= i_muxword_write_ptr_plus_1;
-                end // if
+            if (dsc_muxword_valid_in == 1'b1) begin
+                i_muxword_write_ptr <= i_muxword_write_ptr_plus_1;
             end // if
 
             // ----- syntax buffer ----- //
             // valid 与 payload 属于同一接受事务，不能延迟 valid 后读取 live data。
             if (dsc_unit_size_valid_in == 1'b1) begin
                 i_syntax_buffer[i_syntax_write_ptr] <= dsc_coded_unit_size_in;
+                i_syntax_start_buffer[i_syntax_write_ptr] <= i_syntax_start_pending |
+                                                               (dsc_start_of_slice & i_seen_slice_start);
             end // if
 
-            if (dsc_start_of_slice == 1'b1) begin
-                i_syntax_write_ptr <= '{default: 1'b0};
-            end else if (dsc_unit_size_valid_in == 1'b1) begin
+            if (dsc_unit_size_valid_in == 1'b1) begin
                 i_syntax_write_ptr <= i_syntax_write_ptr_plus_1;
             end // if
 
-            // ----- overflow logic ----- //
+            // 首个 slice 使用复位初态；后续 start 随首个 size 事务排队。
             if (dsc_start_of_slice == 1'b1) begin
-                i_syntax_full <= 1'b0;
-                i_muxword_full <= 1'b0;
-            end else begin
+                i_seen_slice_start <= 1'b1;
+                if (i_seen_slice_start == 1'b1) begin
+                    i_syntax_start_pending <= 1'b1;
+                end
+            end
+            if (dsc_unit_size_valid_in == 1'b1 &&
+                (i_syntax_start_pending == 1'b1 ||
+                 (dsc_start_of_slice == 1'b1 && i_seen_slice_start == 1'b1))) begin
+                i_syntax_start_pending <= 1'b0;
+            end
+
+            // ----- overflow logic ----- //
+            begin
                 // muxword
                 if (dsc_muxword_valid_in == 1'b1) begin
                     if (i_muxword_write_ptr_plus_1 == i_muxword_read_ptr && i_muxword_read == 1'b0) begin
@@ -190,6 +204,7 @@ module dsce_stream_fifo
             dsc_muxword_last_out <= 1'b0;
             dsc_muxword_out <= '{default: 1'b0};
             dsc_coded_size_valid_out <= 1'b0;
+            dsc_coded_size_start_out <= 1'b0;
             dsc_coded_size_out <= 6'd0;
 
             i_muxword_read_ptr <= '{default: 1'b0};
@@ -202,6 +217,7 @@ module dsce_stream_fifo
                 if (i_syntax_write_ptr != i_syntax_read_ptr || i_syntax_full == 1'b1) begin
                     dsc_coded_size_valid_out <= 1'b1;
                     dsc_coded_size_out <= i_syntax_buffer[i_syntax_read_ptr];
+                    dsc_coded_size_start_out <= i_syntax_start_buffer[i_syntax_read_ptr];
                 end // if
             end else begin
                 // read_ptr 指向当前输出项，write_ptr 指向下一空槽。
@@ -214,11 +230,10 @@ module dsce_stream_fifo
                     dsc_coded_size_valid_out <= 1'b0;
                 end // if
                 dsc_coded_size_out <= i_syntax_buffer[i_syntax_read_ptr];
+                dsc_coded_size_start_out <= i_syntax_start_buffer[i_syntax_read_ptr];
             end // if
 
-            if (dsc_start_of_slice == 1'b1) begin
-                i_syntax_read_ptr <= '{default: 1'b0};
-            end else if (dsc_coded_size_valid_out == 1'b1 && dsc_coded_size_ready_out == 1'b1) begin
+            if (dsc_coded_size_valid_out == 1'b1 && dsc_coded_size_ready_out == 1'b1) begin
                 i_syntax_read_ptr <= i_syntax_read_ptr_plus_1;
             end // if
 
@@ -227,18 +242,18 @@ module dsce_stream_fifo
                 if (i_muxword_write_ptr != i_muxword_read_ptr || i_muxword_full == 1'b1) begin
                     dsc_muxword_valid_out <= 1'b1;
                     dsc_muxword_out <= i_muxword_buffer[i_muxword_read_ptr];
+                    dsc_muxword_last_out <= i_muxword_last_buffer[i_muxword_read_ptr];
                 end // if
             end else begin
                 if (dsc_muxword_ready_out == 1'b1) begin
                     if (i_muxword_read_ptr == i_muxword_write_ptr && i_muxword_full == 1'b0)
                         dsc_muxword_valid_out <= 1'b0;
                     dsc_muxword_out <= i_muxword_buffer[i_muxword_read_ptr];
+                    dsc_muxword_last_out <= i_muxword_last_buffer[i_muxword_read_ptr];
                 end // if
             end // if
 
-            if (dsc_start_of_slice == 1'b1) begin
-                i_muxword_read_ptr <= '{default: 1'b0};
-            end else if (i_muxword_read == 1'b1) begin
+            if (i_muxword_read == 1'b1) begin
                 i_muxword_read_ptr <= i_muxword_read_ptr_plus_1;
             end // if
 
